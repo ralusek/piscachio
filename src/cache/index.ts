@@ -1,11 +1,11 @@
-import { CachedCall, Cache, Storage } from '../types';
+import { PiscachioCachedCall, PiscachioCache, PiscachioStorage } from '../types';
 
 const timeouts = new Map<string, NodeJS.Timeout>();
 
-export function getCache(storage: Storage): Cache {
+export function getCache(storage: PiscachioStorage): PiscachioCache {
   function onceResolved<T>(
     key: string,
-    handler?: (error?: any, cachedCall?: CachedCall<T>) => void,
+    handler?: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void,
   ) {
     return new Promise<T>(async (resolve, reject) => {
       // In case not currently resolved, register handler.
@@ -17,7 +17,7 @@ export function getCache(storage: Storage): Cache {
       const cachedCall = await storage.get<T>(key);
       if (cachedCall?.resolvedAt) handle(null, cachedCall);
 
-      function handle(error?: any, cachedCall?: CachedCall<T>) {
+      function handle(error?: any, cachedCall?: PiscachioCachedCall<T>) {
         removeListener();
         handler?.(error, cachedCall);
         if (error) reject(error);
@@ -26,7 +26,7 @@ export function getCache(storage: Storage): Cache {
     });
   }
 
-  async function emitResolved<T>(key: string, error?: any, cachedCall?: CachedCall<T>) {
+  async function emitResolved<T>(key: string, error?: any, cachedCall?: PiscachioCachedCall<T>) {
     if (!error) await storage.set(key, cachedCall!);
 
     await storage.emitResolved(key, error, cachedCall);
@@ -46,7 +46,7 @@ export function getCache(storage: Storage): Cache {
 
       return cachedCall;
     },
-    set: async (key: string, value: CachedCall<any>) => {
+    set: async (key: string, value: PiscachioCachedCall<any>) => {
       if (!value.lazyClear && value.invalidAt) {
         const { id } = value;
         clearTimeout(timeouts.get(key) as NodeJS.Timeout);

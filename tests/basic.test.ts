@@ -1,6 +1,6 @@
-import { cachedCall, registerStorage } from '../src';
+import piscachio, { registerStorage } from '../src';
 import { getDefaultStorage } from '../src/storage/default';
-import { Storage } from '../src/types';
+import { PiscachioStorage } from '../src/types';
 
 describe('Caching library', () => {
   const storage = getDefaultStorage();
@@ -9,11 +9,11 @@ describe('Caching library', () => {
   it('should cache function results', async () => {
     const fn = jest.fn().mockResolvedValue('test');
     
-    const result1 = await cachedCall({ fn, key: 'testKey' }, { lazyClear: true });
+    const result1 = await piscachio({ fn, key: 'testKey' }, { lazyClear: true });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result1).toBe('test');
 
-    const result2 = await cachedCall({ fn, key: 'testKey' }, { lazyClear: true });
+    const result2 = await piscachio({ fn, key: 'testKey' }, { lazyClear: true });
     expect(fn).toHaveBeenCalledTimes(1); // Should not be called again because of caching
     expect(result2).toBe('test');
   });
@@ -22,7 +22,7 @@ describe('Caching library', () => {
     const fn = jest.fn().mockResolvedValue('test');
     const invalidateIn = 1000; // 1 second for test
 
-    const result1 = await cachedCall({ fn, key: 'testKeyA' }, { invalidateIn, storageKey: 'peekable', lazyClear: true });
+    const result1 = await piscachio({ fn, key: 'testKeyA' }, { invalidateIn, storageKey: 'peekable', lazyClear: true });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result1).toBe('test');
 
@@ -34,7 +34,7 @@ describe('Caching library', () => {
     expect(stored).toBeDefined();
     expect(stored!.value).toBe('test');
 
-    const result2 = await cachedCall({ fn, key: 'testKeyA' }, { invalidateIn, storageKey: 'peekable', lazyClear: true });
+    const result2 = await piscachio({ fn, key: 'testKeyA' }, { invalidateIn, storageKey: 'peekable', lazyClear: true });
     expect(fn).toHaveBeenCalledTimes(2); // Should be called again because cache is invalidated
     expect(result2).toBe('test');
   });
@@ -44,7 +44,7 @@ describe('Caching library', () => {
     const fn = jest.fn().mockResolvedValue('test');
     const invalidateIn = 1000; // 1 second for test
 
-    const result1 = await cachedCall({ fn, key: 'testKeyB' }, { invalidateIn, lazyClear: false, storageKey: 'peekable' });
+    const result1 = await piscachio({ fn, key: 'testKeyB' }, { invalidateIn, lazyClear: false, storageKey: 'peekable' });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result1).toBe('test');
 

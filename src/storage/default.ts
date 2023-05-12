@@ -1,11 +1,11 @@
-import { CachedCall, Storage } from '../types';
+import { PiscachioCachedCall, PiscachioStorage } from '../types';
 
-export function getDefaultStorage(): Storage {
-  const cache = new Map<string, CachedCall<any>>();
+export function getDefaultStorage(): PiscachioStorage {
+  const cache = new Map<string, PiscachioCachedCall<any>>();
 
-  const eventListeners = new Map<string, Set<(error?: any, cachedCall?: CachedCall<any>) => void>>();
+  const eventListeners = new Map<string, Set<(error?: any, cachedCall?: PiscachioCachedCall<any>) => void>>();
 
-  async function emitResolved<T>(key: string, error?: any, cachedCall?: CachedCall<T>) {
+  async function emitResolved<T>(key: string, error?: any, cachedCall?: PiscachioCachedCall<T>) {
     if (!eventListeners.has(key)) return;
     const listeners = eventListeners.get(key)!;
     listeners.forEach((listener) => listener(error, cachedCall));
@@ -13,7 +13,7 @@ export function getDefaultStorage(): Storage {
 
   function onResolved<T>(
     key: string,
-    handler: (error?: any, cachedCall?: CachedCall<T>) => void,
+    handler: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void,
   ) {
     if (!eventListeners.has(key)) eventListeners.set(key, new Set());
     const listeners = eventListeners.get(key)!;
@@ -27,7 +27,7 @@ export function getDefaultStorage(): Storage {
   // as similar to alternative storage implementations as possible.
   return {
     get: async (key: string) => (await cache.get(key)) ?? null,
-    set: async (key: string, value: CachedCall<any>) => {
+    set: async (key: string, value: PiscachioCachedCall<any>) => {
       await cache.set(key, value);
     },
     delete: async (key: string) => {

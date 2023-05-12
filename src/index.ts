@@ -1,19 +1,18 @@
-import { Cache, CachedCall, Storage } from './types';
+import { PiscachioCache, PiscachioCachedCall, PiscachioStorage } from './types';
 
 import { getCache } from './cache';
 import { getDefaultStorage } from './storage/default';
 
-const caches: Record<string, Cache>  = {
-  default: getCache(getDefaultStorage()),
-};
-
-
-type CachedCallConfig<R> = {
+type PiscachioCachedCallConfig<R> = {
   key: string | string[];
   fn: (...args: any[]) => R | Promise<R>;
 };
 
-type CachedCallOptions = {
+const caches: Record<string, PiscachioCache>  = {
+  default: getCache(getDefaultStorage()),
+};
+
+type PiscachioCachedCallOptions = {
   // The point at which the cached call should be considered invalid/expired/stale.
   invalidateIn?: number;
   // Implementation detail for storage mechanism as to whether
@@ -26,17 +25,17 @@ type CachedCallOptions = {
   storageKey?: string;
 };
 
-export function registerStorage(name: string, storage: Storage) {
+export function registerStorage(name: string, storage: PiscachioStorage) {
   if (caches[name]) throw new Error(`Cannot register new storage with name ${name} because it already exists.`);
   caches[name] = getCache(storage);
 }
 
-export async function cachedCall<T>(
+export default async function piscachio<T>(
   {
     fn,
     key,
-  }: CachedCallConfig<T>,
-  options: CachedCallOptions = {},
+  }: PiscachioCachedCallConfig<T>,
+  options: PiscachioCachedCallOptions = {},
 ) {
   const keyString = Array.isArray(key) ? key.join(':') : key;
 
@@ -61,7 +60,7 @@ export async function cachedCall<T>(
   const createdAt = Date.now();
   const invalidAt = invalidateIn ? createdAt + invalidateIn : undefined;
 
-  const cachedCall: CachedCall<T> = {
+  const cachedCall: PiscachioCachedCall<T> = {
     id: String(Math.random() * 100000000000000000).padEnd(17, '0'),
     key: keyString,
     createdAt,

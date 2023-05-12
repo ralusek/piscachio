@@ -1,6 +1,6 @@
 // Serializable representation of a function call that
 // can be stored locally or remotely.
-export type CachedCall<T> = {
+export type PiscachioCachedCall<T> = {
   id: string;
   key: string;
   value?: T;
@@ -17,24 +17,24 @@ export type CachedCall<T> = {
   invalidOnResolve: boolean;
 };
 
-export type Cache = {
-  get: <T>(key: string) => Promise<CachedCall<T> | null>;
-  set: (key: string, value: CachedCall<any>) => Promise<CachedCall<any>>;
+export type PiscachioCache = {
+  get: <T>(key: string) => Promise<PiscachioCachedCall<T> | null>;
+  set: (key: string, value: PiscachioCachedCall<any>) => Promise<PiscachioCachedCall<any>>;
   delete: (key: string) => Promise<void>;
   clear: () => Promise<void>;
 
-  onceResolved: <T>(key: string, handler?: (error?: any, cachedCall?: CachedCall<T>) => void) => Promise<T>;
-  onResolved: <T>(key: string, handler: (error?: any, cachedCall?: CachedCall<T>) => void) => void;
-  emitResolved: <T>(key: string, error?: any, cachedCall?: CachedCall<T>) => Promise<void>;
+  onceResolved: <T>(key: string, handler?: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void) => Promise<T>;
+  onResolved: <T>(key: string, handler: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void) => void;
+  emitResolved: <T>(key: string, error?: any, cachedCall?: PiscachioCachedCall<T>) => Promise<void>;
 };
 
-export type Storage = {
+export type PiscachioStorage = {
   // Implementations should return null if the key is not found.
-  get: <T>(key: string) => Promise<CachedCall<T> | null>;
-  set: (key: string, value: CachedCall<any>) => Promise<void>;
+  get: <T>(key: string) => Promise<PiscachioCachedCall<T> | null>;
+  set: (key: string, value: PiscachioCachedCall<any>) => Promise<void>;
   delete: (key: string) => Promise<void>;
   clear: () => Promise<void>;
 
-  onResolved: <T>(key: string, handler: (error?: any, cachedCall?: CachedCall<T>) => void) => () => void;
-  emitResolved: <T>(key: string, error?: any, cachedCall?: CachedCall<T>) => Promise<void>;
+  onResolved: <T>(key: string, handler: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void) => () => void;
+  emitResolved: <T>(key: string, error?: any, cachedCall?: PiscachioCachedCall<T>) => Promise<void>;
 };
