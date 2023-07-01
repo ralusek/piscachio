@@ -16,10 +16,10 @@ export default async function piscachio<T>(
   if (!key) throw new Error('Piscachio key is required.');
   key = Array.isArray(key) ? key : [key];
   key.forEach(key => {
-    if (key.includes(':')) throw new Error(`Piscachio key ${key} may not contain the ":" character.`);
+    if (key.includes('::')) throw new Error(`Piscachio key ${key} may not contain the "::" character.`);
   });
-  
-  const keyAsString = Array.isArray(key) ? key.join(':') : key;
+
+  const keyAsString = key.join('::');
 
   const cachedCall = await cache.handle(keyAsString, fn, { key, expireIn, staleIn });
 

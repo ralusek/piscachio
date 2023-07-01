@@ -8,10 +8,9 @@ describe('validation', () => {
     await expect(piscachio(fn, {})).rejects.toThrow('Piscachio key is required.');
   });
   
-  it('should throw an error when a key contains ":" character', async () => {
+  it('should throw an error when a key contains "::" character', async () => {
     const fn = jest.fn().mockResolvedValue('test');
   
-    await expect(piscachio(fn, { key: 'test:key' })).rejects.toThrow('Piscachio key test:key may not contain the ":" character.');
+    await expect(piscachio(fn, { key: 'test::key' })).rejects.toThrow('Piscachio key test::key may not contain the "::" character.');
   });
-  
 });
