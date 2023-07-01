@@ -83,7 +83,9 @@ describe('basic piscachio functionality', () => {
   
     // Second invocation: the function is rerun due to staleness but it still returns the stale value
     const result2 = await piscachio(fn, { key: 'testKeyStale' });
-    expect(fn).toHaveBeenCalledTimes(2); 
+    expect(fn).toHaveBeenCalledTimes(1); 
+    await new Promise((resolve) => setTimeout(() => resolve(null), 50)); // Allow for async execution
+    expect(fn).toHaveBeenCalledTimes(2); // Allowed for async execution
     expect(result2).toBe('firstTest'); // Should still return the first value
   
     await new Promise((resolve) => setTimeout(() => resolve(null), 100));
@@ -97,7 +99,9 @@ describe('basic piscachio functionality', () => {
 
     // Fourth invocation: the function should now return the updated value
     const result4 = await piscachio(fn, { key: 'testKeyStale' });
-    expect(fn).toHaveBeenCalledTimes(3); // Has been called again because of previous staleIn
+    expect(fn).toHaveBeenCalledTimes(2); // Allowed for async execution
+    await new Promise((resolve) => setTimeout(() => resolve(null), 50)); // Allow for async execution
+    expect(fn).toHaveBeenCalledTimes(3); // Has been called again because of previous staleIn, Allowed for async execution
     expect(result4).toBe('secondTest'); // Should return the second value now
   });  
 });

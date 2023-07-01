@@ -1,12 +1,13 @@
 {
   "name": "piscachio",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Library for grouping/caching function calls.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "jest"
+    "test": "jest",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [],
   "author": "Tomas Savigliano <ralusek@gmail.com>",
