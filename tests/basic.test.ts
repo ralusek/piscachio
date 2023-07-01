@@ -1,4 +1,4 @@
-import piscachio from '../src';
+import piscachio from '../dist';
 
 describe('basic piscachio functionality', () => {
   it('should cache function results', async () => {
@@ -14,6 +14,43 @@ describe('basic piscachio functionality', () => {
     expect(fn).toHaveBeenCalledTimes(1); // Should not be called again because of caching
     expect(result2).toBe('test');
   });
+
+  it('should cache function results with async function', async () => {
+    // Use jest.fn to create a mock function that simulates a delay of 250ms
+    const fn = jest.fn().mockImplementation(() => new Promise(resolve => setTimeout(() => resolve('test'), 250)));
+  
+    // Cache and retrieve the result of the function call
+    const result1 = await piscachio(fn, { key: ['testKeyAsync', 'a'] });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result1).toBe('test');
+  
+    // Wait for 100ms
+    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
+  
+    // Retrieve the cached result
+    const result2 = await piscachio(fn, { key: ['testKeyAsync', 'a'] });
+    expect(fn).toHaveBeenCalledTimes(1); // The function should not be called again because the result is cached
+    expect(result2).toBe('test');
+  });
+
+  it('should cache function results with async function where resolution happens before next call attempt', async () => {
+    // Use jest.fn to create a mock function that simulates a delay of 250ms
+    const fn = jest.fn().mockImplementation(() => new Promise(resolve => setTimeout(() => resolve('test'), 50)));
+  
+    // Cache and retrieve the result of the function call
+    const result1 = await piscachio(fn, { key: ['testKeyAsync', 'b'] });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result1).toBe('test');
+  
+    // Wait for 100ms
+    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
+  
+    // Retrieve the cached result
+    const result2 = await piscachio(fn, { key: ['testKeyAsync', 'b'] });
+    expect(fn).toHaveBeenCalledTimes(1); // The function should not be called again because the result is cached
+    expect(result2).toBe('test');
+  });
+  
 
   it('should expire the cache', async () => {
     const fn = jest.fn().mockResolvedValue('test');

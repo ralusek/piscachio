@@ -30,15 +30,19 @@ export default function createCache() {
     };
     cached.set(key, cachedCall);
 
-    const promise = fn()
-    .then((value) => {
-      cachedCall.value = value;
-      cachedCall.resolvedAt = Date.now();
-      return cachedCall;
-    })
-    .catch(err => {
-      clear(key);
-      throw err;
+    // Create new wrapper promise to delay execution until next tick
+    const promise = new Promise<PiscachioCachedCall<T>>((resolve, reject) => {
+      setTimeout(async () => {
+        try {
+          const value = await fn();
+          cachedCall.value = value;
+          cachedCall.resolvedAt = Date.now();
+          resolve(cachedCall);
+        } catch (err) {
+          clear(key);
+          reject(err);
+        }
+      }, 0);
     });
 
     promises.set(key, promise);
