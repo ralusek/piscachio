@@ -1,40 +1,25 @@
-// Serializable representation of a function call that
-// can be stored locally or remotely.
+export type PiscachioConfig = {
+  key: string | string[];
+  expireIn?: number;
+  staleIn?: number;
+};
+
 export type PiscachioCachedCall<T> = {
-  id: string;
   key: string;
   value?: T;
   resolvedAt?: number;
   createdAt: number;
-  // The point at which the cached call should be considered invalid/expired/stale.
-  invalidAt?: number;
-  // Implementation detail for storage mechanism as to whether
-  // or not the cached call should be proactively deleted when it is invalid (as opposed to
-  // just being deleted when it is requested and found to be invalid)
-  lazyClear: boolean;
-  // Can be configured to be removed from the cache right when resolved, for the case
-  // where the cached call is only meant to deduplicated parallel calls.
-  invalidOnResolve: boolean;
+  // The point at which the result, when returned, will trigger a re-run of the function.
+  // Important: A stale result will still be returned if the function is invoked with a stale
+  // cached call, but the function will be re-run and the result will be updated in the cache.
+  // This is mirroring the behavior in react-query.
+  staleAt: number | null;
+  // The point at which the result should be removed from the cache.
+  expiredAt: number | null;
 };
 
 export type PiscachioCache = {
-  get: <T>(key: string) => Promise<PiscachioCachedCall<T> | null>;
-  set: (key: string, value: PiscachioCachedCall<any>) => Promise<PiscachioCachedCall<any>>;
-  delete: (key: string) => Promise<void>;
-  clear: () => Promise<void>;
-
-  onceResolved: <T>(key: string, handler?: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void) => Promise<T>;
-  onResolved: <T>(key: string, handler: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void) => void;
-  emitResolved: <T>(key: string, error?: any, cachedCall?: PiscachioCachedCall<T>) => Promise<void>;
+  handle: < T>(key: string, fn: () => Promise<T>, config: PiscachioConfig) => Promise<PiscachioCachedCall<T>>;
 };
 
-export type PiscachioStorage = {
-  // Implementations should return null if the key is not found.
-  get: <T>(key: string) => Promise<PiscachioCachedCall<T> | null>;
-  set: (key: string, value: PiscachioCachedCall<any>) => Promise<void>;
-  delete: (key: string) => Promise<void>;
-  clear: () => Promise<void>;
-
-  onResolved: <T>(key: string, handler: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void) => () => void;
-  emitResolved: <T>(key: string, error?: any, cachedCall?: PiscachioCachedCall<T>) => Promise<void>;
-};
+export type KeyString = string;

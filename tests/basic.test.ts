@@ -1,62 +1,66 @@
-import piscachio, { registerStorage } from '../src';
-import { getDefaultStorage } from '../src/storage/default';
-import { PiscachioStorage } from '../src/types';
+import piscachio from '../src';
 
-describe('Caching library', () => {
-  const storage = getDefaultStorage();
-  registerStorage('peekable', storage);
-
+describe('basic piscachio functionality', () => {
   it('should cache function results', async () => {
     const fn = jest.fn().mockResolvedValue('test');
     
-    const result1 = await piscachio({ fn, key: 'testKey' }, { lazyClear: true });
+    const result1 = await piscachio(fn, { key: ['testKey', 'a'] });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result1).toBe('test');
 
-    const result2 = await piscachio({ fn, key: 'testKey' }, { lazyClear: true });
+    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
+
+    const result2 = await piscachio(fn, { key: ['testKey', 'a'] });
     expect(fn).toHaveBeenCalledTimes(1); // Should not be called again because of caching
     expect(result2).toBe('test');
   });
 
-  it('should respect invalidateIn option', async () => {
+  it('should expire the cache', async () => {
     const fn = jest.fn().mockResolvedValue('test');
-    const invalidateIn = 1000; // 1 second for test
-
-    const result1 = await piscachio({ fn, key: 'testKeyA' }, { invalidateIn, storageKey: 'peekable', lazyClear: true });
+    
+    const result1 = await piscachio(fn, { key: 'testKeyExpiresImmediately', expireIn: 0 });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result1).toBe('test');
 
-    // Wait for cache to be invalidated
-    await new Promise(resolve => setTimeout(resolve, invalidateIn + 100));
+    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
 
-    // While it should be invalidated at this point, it should not be deleted as we specified lazyClear
-    const stored = await storage.get('testKeyA');
-    expect(stored).toBeDefined();
-    expect(stored!.value).toBe('test');
-
-    const result2 = await piscachio({ fn, key: 'testKeyA' }, { invalidateIn, storageKey: 'peekable', lazyClear: true });
-    expect(fn).toHaveBeenCalledTimes(2); // Should be called again because cache is invalidated
+    const result2 = await piscachio(fn, { key: 'testKeyExpiresImmediately' });
+    expect(fn).toHaveBeenCalledTimes(2); // Should be called again because it expired
     expect(result2).toBe('test');
   });
 
-
-  it('should respect lazyClear option', async () => {
-    const fn = jest.fn().mockResolvedValue('test');
-    const invalidateIn = 1000; // 1 second for test
-
-    const result1 = await piscachio({ fn, key: 'testKeyB' }, { invalidateIn, lazyClear: false, storageKey: 'peekable' });
+  it('should rerun the function when the cache is stale and still return the stale value', async () => {
+    const fn = jest
+      .fn()
+      .mockResolvedValueOnce('firstTest')
+      .mockResolvedValueOnce('secondTest')
+      .mockResolvedValueOnce('thirdTest')
+      .mockResolvedValueOnce('fourthTest');
+  
+    // First invocation
+    const result1 = await piscachio(fn, { key: 'testKeyStale', staleIn: 0 });
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(result1).toBe('test');
+    expect(result1).toBe('firstTest');
+  
+    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
+  
+    // Second invocation: the function is rerun due to staleness but it still returns the stale value
+    const result2 = await piscachio(fn, { key: 'testKeyStale' });
+    expect(fn).toHaveBeenCalledTimes(2); 
+    expect(result2).toBe('firstTest'); // Should still return the first value
+  
+    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
+  
+    // Third invocation: the function should now return the updated value
+    const result3 = await piscachio(fn, { key: 'testKeyStale', staleIn: 0 });
+    expect(fn).toHaveBeenCalledTimes(2); 
+    expect(result3).toBe('secondTest'); // Should return the second value now
 
-    const beforeInvalidate = await storage.get('testKeyB');
-    expect(beforeInvalidate).toBeDefined();
-    expect(beforeInvalidate!.value).toBe('test');
+    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
 
-    // Wait for cache to be invalidated
-    await new Promise(resolve => setTimeout(resolve, invalidateIn + 200));
-
-    // We expect it to not only be invalidated but to also have been deleted from the cache.
-    const stored = await storage.get('testKeyB');
-    expect(stored).toBeNull;
-  });
+    // Fourth invocation: the function should now return the updated value
+    const result4 = await piscachio(fn, { key: 'testKeyStale' });
+    expect(fn).toHaveBeenCalledTimes(3); // Has been called again because of previous staleIn
+    expect(result4).toBe('secondTest'); // Should return the second value now
+  });  
 });

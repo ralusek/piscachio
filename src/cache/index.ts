@@ -1,86 +1,74 @@
-import { PiscachioCachedCall, PiscachioCache, PiscachioStorage } from '../types';
+import { KeyString, PiscachioCache, PiscachioCachedCall, PiscachioConfig } from '../types';
 
-const timeouts = new Map<string, NodeJS.Timeout>();
+export default function createCache() {
+  const cached = new Map<KeyString, PiscachioCachedCall<any>>();
+  const promises = new Map<KeyString, Promise<PiscachioCachedCall<any>>>();
+  const timeouts = new Map<KeyString, NodeJS.Timeout>();
 
-export function getCache(storage: PiscachioStorage): PiscachioCache {
-  function onceResolved<T>(
-    key: string,
-    handler?: (error?: any, cachedCall?: PiscachioCachedCall<T>) => void,
-  ) {
-    return new Promise<T>(async (resolve, reject) => {
-      // In case not currently resolved, register handler.
-      const removeListener = storage.onResolved<T>(key, handle);
-
-      if (!removeListener) throw new Error(`Storage implementation of onResolved must return a function to remove the listener.`);
-
-      // Check if already resolved.
-      const cachedCall = await storage.get<T>(key);
-      if (cachedCall?.resolvedAt) handle(null, cachedCall);
-
-      function handle(error?: any, cachedCall?: PiscachioCachedCall<T>) {
-        removeListener();
-        handler?.(error, cachedCall);
-        if (error) reject(error);
-        else resolve(cachedCall!.value!);
-      }
-    });
-  }
-
-  async function emitResolved<T>(key: string, error?: any, cachedCall?: PiscachioCachedCall<T>) {
-    if (!error) await storage.set(key, cachedCall!);
-
-    await storage.emitResolved(key, error, cachedCall);
-
-    if (error || cachedCall!.invalidOnResolve) await cache.delete(key);
-  }
-  
-  const cache = {
-    get: async <T>(key: string) => {
-      const cachedCall = await storage.get<T>(key);
-      if (!cachedCall) return null;
-
-      if (cachedCall.invalidAt && cachedCall.invalidAt < Date.now()) {
-        cache.delete(key);
-        return null;
-      }
-
-      return cachedCall;
-    },
-    set: async (key: string, value: PiscachioCachedCall<any>) => {
-      if (!value.lazyClear && value.invalidAt) {
-        const { id } = value;
-        clearTimeout(timeouts.get(key) as NodeJS.Timeout);
-        const timeoutId = setTimeout(async () => {
-          // Sanity check to make sure we're deleting the right value.
-          // This won't be a problem now, but if this library grows in complexity
-          // this is a likely area for problems.
-          const currentlyCached = await storage.get(key);
-          if (currentlyCached?.id === id) await cache.delete(key);
-          // If the value has changed, we don't want to delete it, but we still
-          // want to clear the timeout.
-          else timeouts.delete(key);
-        }, value.invalidAt - value.createdAt);
-        timeouts.set(key, timeoutId);
-      }
-      storage.set(key, value);
-      return value;
-    },
-    delete: async (key: string) => {
-      clearTimeout(timeouts.get(key) as NodeJS.Timeout);
+  function clear(key: KeyString) {
+    cached.delete(key);
+    promises.delete(key);
+    const timeout = timeouts.get(key);
+    if (timeout) {
+      clearTimeout(timeout);
       timeouts.delete(key);
-      storage.delete(key);
-    },
-    clear: async () => {
-      timeouts.forEach((timeout, key) => {
-        clearTimeout(timeout);
-        timeouts.delete(key);
-      });
-      storage.clear();
-    },
+    }
+  }
 
-    onceResolved,
-    emitResolved,
-    onResolved: storage.onResolved,
+  function run<T>(
+    fn: () => Promise<T>,
+    key: KeyString,
+    config: PiscachioConfig,
+  ) {
+    clear(key);
+    const now = Date.now();
+    const cachedCall: PiscachioCachedCall<T> = {
+      key,
+      createdAt: now,
+      expiredAt: config.expireIn !== undefined ? now + config.expireIn : null,
+      staleAt: config.staleIn !== undefined ? now + config.staleIn : null,
+    };
+    cached.set(key, cachedCall);
+
+    const promise = fn()
+    .then((value) => {
+      cachedCall.value = value;
+      cachedCall.resolvedAt = Date.now();
+      return cachedCall;
+    })
+    .catch(err => {
+      clear(key);
+      throw err;
+    });
+
+    promises.set(key, promise);
+
+    if (cachedCall.expiredAt) {
+      timeouts.set(key, setTimeout(() => clear(key), cachedCall.expiredAt - now));
+    }
+
+    return promise;
+  }
+
+  const cache: PiscachioCache = {
+    handle: async <T>(key: string, fn: () => Promise<T>, config: PiscachioConfig) => {
+      const cachedCall = cached.get(key);
+      const now = Date.now();
+      if (
+        !cachedCall ||
+        (cachedCall.expiredAt && cachedCall.expiredAt <= now) ||
+        (config.expireIn !== undefined && (cachedCall.createdAt + config.expireIn <= now))
+      ) return run(fn, key, config);
+
+      const promise = promises.get(key)!;
+
+      if (cachedCall?.staleAt && cachedCall.staleAt <= now) run(fn, key, config);
+
+      // Update values that can be overridden by the config
+      if (config.staleIn !== undefined) cachedCall.staleAt = now + config.staleIn;
+
+      return promise;
+    },
   };
 
   return cache;

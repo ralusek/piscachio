@@ -1,87 +1,27 @@
-import { PiscachioCache, PiscachioCachedCall, PiscachioStorage } from './types';
+// Types
+import { KeyString, PiscachioConfig } from './types';
 
-import { getCache } from './cache';
-import { getDefaultStorage } from './storage/default';
+import createCache from './cache';
 
-type PiscachioCachedCallConfig<R> = {
-  key: string | string[];
-  fn: (...args: any[]) => R | Promise<R>;
-};
-
-const caches: Record<string, PiscachioCache>  = {
-  default: getCache(getDefaultStorage()),
-};
-
-type PiscachioCachedCallOptions = {
-  // The point at which the cached call should be considered invalid/expired/stale.
-  invalidateIn?: number;
-  // Implementation detail for storage mechanism as to whether
-  // or not the cached call should be proactively deleted when it is invalid (as opposed to
-  // just being deleted when it is requested and found to be invalid)
-  lazyClear?: boolean;
-  // Can be configured to be removed from the cache right when resolved, for the case
-  // where the cached call is only meant to deduplicated parallel calls.
-  invalidOnResolve?: boolean;
-  storageKey?: string;
-};
-
-export function registerStorage(name: string, storage: PiscachioStorage) {
-  if (caches[name]) throw new Error(`Cannot register new storage with name ${name} because it already exists.`);
-  caches[name] = getCache(storage);
-}
+const cache = createCache();
 
 export default async function piscachio<T>(
+  fn: () => Promise<T>,
   {
-    fn,
     key,
-  }: PiscachioCachedCallConfig<T>,
-  options: PiscachioCachedCallOptions = {},
+    expireIn,
+    staleIn,
+  }: PiscachioConfig,
 ) {
-  const keyString = Array.isArray(key) ? key.join(':') : key;
+  if (!key) throw new Error('Piscachio key is required.');
+  key = Array.isArray(key) ? key : [key];
+  key.forEach(key => {
+    if (key.includes(':')) throw new Error(`Piscachio key ${key} may not contain the ":" character.`);
+  });
+  
+  const keyAsString = Array.isArray(key) ? key.join(':') : key;
 
-  const {
-    invalidateIn = 1000 * 60 * 10, // 10 minutes
-    lazyClear = false,
-    invalidOnResolve = false,
-    storageKey = 'default',
-  } = options;
+  const cachedCall = await cache.handle(keyAsString, fn, { key, expireIn, staleIn });
 
-  const cache = caches[storageKey];
-
-  if (!cache) throw new Error(`No cache found with name ${storageKey}.`);
-
-  const existing = await cache.get<T>(keyString);
-
-  // TODO determine if there are certain settings we want to
-  // update on subsequent calls, but for now the initial call
-  // determines the cache settings.
-  if (existing) return cache.onceResolved<T>(keyString);
-
-  const createdAt = Date.now();
-  const invalidAt = invalidateIn ? createdAt + invalidateIn : undefined;
-
-  const cachedCall: PiscachioCachedCall<T> = {
-    id: String(Math.random() * 100000000000000000).padEnd(17, '0'),
-    key: keyString,
-    createdAt,
-    invalidAt,
-    lazyClear,
-    invalidOnResolve,
-  };
-
-  let error: any;
-  try {
-    const [ value ] = await Promise.all([
-      fn(),
-      cache.set(keyString, cachedCall).catch(err => {}),
-    ]);
-    cachedCall.value = value;
-  }
-  catch (err: any) {
-    error = err;
-  }
-  cachedCall.resolvedAt = Date.now();
-  cache.emitResolved(keyString, error, cachedCall);
-
-  return cache.onceResolved<T>(keyString);
+  return cachedCall.value;
 }
