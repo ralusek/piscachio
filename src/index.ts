@@ -23,5 +23,5 @@ export default async function piscachio<T>(
 
   const cachedCall = await cache.handle(keyAsString, fn, { key, expireIn, staleIn });
 
-  return cachedCall.value;
+  return cachedCall.value as T;
 }
