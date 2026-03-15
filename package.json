@@ -2,10 +2,21 @@
   "name": "piscachio",
   "version": "0.5.0",
   "description": "Library for grouping/caching function calls.",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
     "pretest": "npm run build",
     "test": "jest",
     "prepublishOnly": "npm run build"
@@ -16,6 +27,7 @@
   "devDependencies": {
     "@types/jest": "^29.5.1",
     "@types/node": "^18.16.3",
+    "esbuild": "^0.27.4",
     "jest": "^29.5.0",
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3"

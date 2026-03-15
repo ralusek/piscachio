@@ -11,7 +11,7 @@ async function sandbox(fn: () => any) {
 export default function createCache() {
   const cached = new Map<KeyString, PiscachioCachedCall<any>>();
   const promises = new Map<KeyString, Promise<PiscachioCachedCall<any>>>();
-  const timeouts = new Map<KeyString, NodeJS.Timeout>();
+  const timeouts = new Map<KeyString, ReturnType<typeof setTimeout>>();
 
   function clear(key: KeyString) {
     cached.delete(key);
