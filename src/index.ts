@@ -1,5 +1,5 @@
 // Types
-import { KeyString, PiscachioConfig } from './types';
+import { KeyString, PiscachioConfig, PiscachioSetConfig } from './types';
 
 import createCache from './cache';
 
@@ -15,16 +15,11 @@ export default async function piscachio<T>(
 ): Promise<T>;
 export default async function piscachio<T>(
   fn: () => Promise<T>,
-  {
-    key,
-    expireIn,
-    staleIn,
-    rush,
-  }: PiscachioConfig,
+  config: PiscachioConfig,
 ) {
-  const keyAsString = getKeyAsString(key);
+  const keyAsString = getKeyAsString(config.key);
 
-  const cachedCall = await cache.handle(keyAsString, fn, { key, expireIn, staleIn, rush });
+  const cachedCall = await cache.handle(keyAsString, fn, config);
 
   if (cachedCall === null) return null;
 
@@ -33,7 +28,7 @@ export default async function piscachio<T>(
 
 export function set<T>(
   value: T,
-  config: Omit<PiscachioConfig, 'rush'>,
+  config: PiscachioSetConfig,
 ): T {
   const keyAsString = getKeyAsString(config.key);
   cache.set(keyAsString, value, config);

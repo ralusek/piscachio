@@ -1,4 +1,12 @@
-import { KeyString, PiscachioCache, PiscachioCachedCall, PiscachioConfig } from '../types';
+import { KeyString, PiscachioCache, PiscachioCachedCall, PiscachioConfig, PiscachioSetConfig } from '../types';
+
+async function sandbox(fn: () => any) {
+  try {
+    return await fn();
+  } catch (error) {
+    // Do nothing
+  }
+}
 
 export default function createCache() {
   const cached = new Map<KeyString, PiscachioCachedCall<any>>();
@@ -95,13 +103,25 @@ export default function createCache() {
       }
       
       // Handle cache miss or expiration resulting in a new run.
-      if (!cachedCall) return run(fn, key, config);
+      if (!cachedCall) {
+        const result = run(fn, key, config);
+        if (config?.onMiss) await sandbox(() => config.onMiss!({ ...cached.get(key)! }));
+        return result;
+      }
 
       // Handle cache hit.
       const promise = promises.get(key)!;
 
+      if (config?.onHit) await sandbox(() => config.onHit!({ ...cachedCall }));
+
       // If stale, run, but don't await the result.
-      if (cachedCall?.staleAt && cachedCall.staleAt <= now) run(fn, key, config);
+      if (cachedCall?.staleAt && cachedCall.staleAt <= now) {
+        if (config?.onStale) await sandbox(() => config.onStale!({ ...cachedCall }));
+        run(fn, key, config);
+      }
+      else {
+        if (config?.onFresh) await sandbox(() => config.onFresh!({ ...cachedCall }));
+      }
 
       // Return cached call.
       return promise;
@@ -122,7 +142,7 @@ export default function createCache() {
     return await result;
   }
 
-  function set<T>(key: KeyString, value: T, config: Omit<PiscachioConfig, 'rush'>) {
+  function set<T>(key: KeyString, value: T, config: PiscachioSetConfig) {
     const cachedCall = store<T>(key, config);
     cachedCall.value = value;
     cachedCall.resolvedAt = cachedCall.createdAt;

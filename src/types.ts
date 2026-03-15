@@ -1,3 +1,5 @@
+export type PiscachioLifecycleCallback<T = any> = (cachedCall: PiscachioCachedCall<T>) => void | Promise<void>;
+
 export type PiscachioConfig = {
   key: string | string[];
   expireIn?: number;
@@ -7,7 +9,27 @@ export type PiscachioConfig = {
   // If there is a pending run, it will not be awaited. If the promise is already resolved, it will be
   // returned.
   rush?: boolean;
+
+  // Lifecycle callbacks
+  // Called when the cache does not have an entry for the key and a new run is initiated.
+  // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
+  // If caller wishes it to be purely observational, simply do not await your logic within the callback.
+  onMiss?: PiscachioLifecycleCallback;
+  // Called when the cache has an entry for the key (hit), regardless of staleness.
+  // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
+  // If caller wishes it to be purely observational, simply do not await your logic within the callback.
+  onHit?: PiscachioLifecycleCallback;
+  // Called when the cache has an entry but it is stale (subset of hits).
+  // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
+  // If caller wishes it to be purely observational, simply do not await your logic within the callback.
+  onStale?: PiscachioLifecycleCallback;
+  // Called when the cache has an entry and it is fresh (subset of hits).
+  // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
+  // If caller wishes it to be purely observational, simply do not await your logic within the callback.
+  onFresh?: PiscachioLifecycleCallback;
 };
+
+export type PiscachioSetConfig = Omit<PiscachioConfig, 'rush' | 'onMiss' | 'onHit' | 'onStale' | 'onFresh'>;
 
 export type PiscachioCachedCall<T> = {
   key: string;
@@ -29,7 +51,7 @@ export type PiscachioCache = {
     <T>(key: string, fn: () => T | Promise<T>, config: PiscachioConfig & { rush: true }): Promise<PiscachioCachedCall<T> | null>;
     <T>(key: string, fn: () => T | Promise<T>, config: PiscachioConfig): Promise<PiscachioCachedCall<T>>;
   };
-  set: <T>(key: string, value: T, config: Omit<PiscachioConfig, 'rush'>) => PiscachioCachedCall<T>;
+  set: <T>(key: string, value: T, config: PiscachioSetConfig) => PiscachioCachedCall<T>;
 };
 
 export type KeyString = string;
