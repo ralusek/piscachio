@@ -82,17 +82,13 @@ describe('basic piscachio functionality', () => {
   
     // Second invocation: the function is rerun due to staleness but it still returns the stale value
     const result2 = await piscachio(fn, { key: 'testKeyStale' });
-    expect(fn).toHaveBeenCalledTimes(1); // Will still be 1 despite us just now firing off new one because we haven't waited next tick
-    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
     expect(fn).toHaveBeenCalledTimes(2); // Allowed for async execution
     expect(result2).toBe('firstTest'); // Should still have returned the first value
   
     // Third invocation: the function should now return the updated value
     const result3 = await piscachio(fn, { key: 'testKeyStale', staleIn: 0 });
-    expect(fn).toHaveBeenCalledTimes(2); // Will still be 2 despite us just now firing off new one because we haven't waited next tick
-    expect(result3).toBe('secondTest'); // Should return the second value now
-    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
     expect(fn).toHaveBeenCalledTimes(3); 
+    expect(result3).toBe('secondTest'); // Should return the second value now
 
     // Fourth invocation: the function should now return the updated value
     const result4 = await piscachio(fn, { key: 'testKeyStale', staleIn: 150 });
@@ -110,9 +106,6 @@ describe('basic piscachio functionality', () => {
 
     await new Promise((resolve) => setTimeout(() => resolve(null), 200)); //  Wait past staleIn value
     const result6 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
-    // Will still be 3 because, same as previous examplpes, despite being stale, fn won't execute until next tick
-    expect(fn).toHaveBeenCalledTimes(3); 
-    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
     expect(fn).toHaveBeenCalledTimes(4); // Now reflects fact that we had exceeded createdAt + staleIn value
     expect(result6).toBe('thirdTest');
 

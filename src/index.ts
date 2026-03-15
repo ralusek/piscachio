@@ -31,7 +31,16 @@ export default async function piscachio<T>(
   return cachedCall.value as T;
 }
 
-function getKeyAsString(key: string | string[]) {
+export function set<T>(
+  value: T,
+  config: Omit<PiscachioConfig, 'rush'>,
+): T {
+  const keyAsString = getKeyAsString(config.key);
+  cache.set(keyAsString, value, config);
+  return value;
+}
+
+function getKeyAsString(key: string | string[]): KeyString {
   if (!key) throw new Error('Piscachio key is required.');
   key = Array.isArray(key) ? key : [key];
   key.forEach(key => {

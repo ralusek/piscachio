@@ -26,9 +26,10 @@ export type PiscachioCachedCall<T> = {
 
 export type PiscachioCache = {
   handle: {
-    <T>(key: string, fn: () => Promise<T>, config: PiscachioConfig & { rush: true }): Promise<PiscachioCachedCall<T> | null>;
-    <T>(key: string, fn: () => Promise<T>, config: PiscachioConfig): Promise<PiscachioCachedCall<T>>;
+    <T>(key: string, fn: () => T | Promise<T>, config: PiscachioConfig & { rush: true }): Promise<PiscachioCachedCall<T> | null>;
+    <T>(key: string, fn: () => T | Promise<T>, config: PiscachioConfig): Promise<PiscachioCachedCall<T>>;
   };
+  set: <T>(key: string, value: T, config: Omit<PiscachioConfig, 'rush'>) => PiscachioCachedCall<T>;
 };
 
 export type KeyString = string;

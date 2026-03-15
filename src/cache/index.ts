@@ -26,11 +26,7 @@ export default function createCache() {
     return clear(key);
   }
 
-  function run<T>(
-    fn: () => Promise<T>,
-    key: KeyString,
-    config: PiscachioConfig,
-  ) {
+  function store<T>(key: KeyString, config: Pick<PiscachioConfig, 'expireIn' | 'staleIn'>) {
     clear(key);
     const now = Date.now();
     const cachedCall: PiscachioCachedCall<T> = {
@@ -41,28 +37,35 @@ export default function createCache() {
     };
     cached.set(key, cachedCall);
 
-    // Create new wrapper promise to delay execution until next tick
-    const promise = new Promise<PiscachioCachedCall<T>>((resolve, reject) => {
-      setTimeout(async () => {
-        try {
-          const value = await fn();
-          cachedCall.value = value;
-          cachedCall.resolvedAt = Date.now();
-          resolve(cachedCall);
-        } catch (err) {
-          clear(key);
-          reject(err);
-        }
-      }, 0);
+    if (cachedCall.expiredAt) {
+      timeouts.set(key, setTimeout(() => clearIfExpired(key), cachedCall.expiredAt - now));
+    }
+
+    return cachedCall;
+  }
+
+  function run<T>(
+    fn: () => Promise<T>,
+    key: KeyString,
+    config: PiscachioConfig,
+  ) {
+    const cachedCall = store<T>(key, config);
+
+    const promise = new Promise<PiscachioCachedCall<T>>(async (resolve, reject) => {
+      try {
+        const value = await fn();
+        cachedCall.value = value;
+        cachedCall.resolvedAt = Date.now();
+        resolve(cachedCall);
+      } catch (err) {
+        clear(key);
+        reject(err);
+      }
     });
 
     // Set promise without waiting for it to resolve, preventing multiple runs while one is in flight
     // or returned.
     promises.set(key, promise);
-
-    if (cachedCall.expiredAt) {
-      timeouts.set(key, setTimeout(() => clearIfExpired(key), cachedCall.expiredAt - now));
-    }
 
     return promise;
   }
@@ -106,8 +109,8 @@ export default function createCache() {
 
     // If rush is true, only return result if it is already resolved.
     if (config.rush) {
-      // We need to wait a tick so that a run that resolves immediately has a chance
-      // to update the cached call to be resolvedAt(promise resolution propagates
+      // We wait a tick so that a run that resolves immediately has a chance
+      // to update the cached call to be resolvedAt (promise resolution propagates
       // through multiple microtasks even when the underlying promise is already resolved).
       await new Promise((resolve) => setTimeout(resolve, 0));
       
@@ -119,8 +122,17 @@ export default function createCache() {
     return await result;
   }
 
+  function set<T>(key: KeyString, value: T, config: Omit<PiscachioConfig, 'rush'>) {
+    const cachedCall = store<T>(key, config);
+    cachedCall.value = value;
+    cachedCall.resolvedAt = cachedCall.createdAt;
+    promises.set(key, Promise.resolve(cachedCall));
+    return cachedCall;
+  }
+
   const cache: PiscachioCache = {
     handle: handle as PiscachioCache['handle'],
+    set,
   };
 
   return cache;
