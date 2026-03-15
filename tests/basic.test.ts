@@ -72,36 +72,54 @@ describe('basic piscachio functionality', () => {
       .mockResolvedValueOnce('firstTest')
       .mockResolvedValueOnce('secondTest')
       .mockResolvedValueOnce('thirdTest')
-      .mockResolvedValueOnce('fourthTest');
+      .mockResolvedValueOnce('fourthTest')
+      .mockResolvedValueOnce('fifthTest');
   
     // First invocation
     const result1 = await piscachio(fn, { key: 'testKeyStale', staleIn: 0 });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result1).toBe('firstTest');
   
-    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
-  
     // Second invocation: the function is rerun due to staleness but it still returns the stale value
     const result2 = await piscachio(fn, { key: 'testKeyStale' });
-    expect(fn).toHaveBeenCalledTimes(1); 
-    await new Promise((resolve) => setTimeout(() => resolve(null), 50)); // Allow for async execution
+    expect(fn).toHaveBeenCalledTimes(1); // Will still be 1 despite us just now firing off new one because we haven't waited next tick
+    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
     expect(fn).toHaveBeenCalledTimes(2); // Allowed for async execution
-    expect(result2).toBe('firstTest'); // Should still return the first value
-  
-    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
+    expect(result2).toBe('firstTest'); // Should still have returned the first value
   
     // Third invocation: the function should now return the updated value
     const result3 = await piscachio(fn, { key: 'testKeyStale', staleIn: 0 });
-    expect(fn).toHaveBeenCalledTimes(2); 
+    expect(fn).toHaveBeenCalledTimes(2); // Will still be 2 despite us just now firing off new one because we haven't waited next tick
     expect(result3).toBe('secondTest'); // Should return the second value now
-
-    await new Promise((resolve) => setTimeout(() => resolve(null), 100));
+    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
+    expect(fn).toHaveBeenCalledTimes(3); 
 
     // Fourth invocation: the function should now return the updated value
-    const result4 = await piscachio(fn, { key: 'testKeyStale' });
-    expect(fn).toHaveBeenCalledTimes(2); // Allowed for async execution
-    await new Promise((resolve) => setTimeout(() => resolve(null), 50)); // Allow for async execution
-    expect(fn).toHaveBeenCalledTimes(3); // Has been called again because of previous staleIn, Allowed for async execution
-    expect(result4).toBe('secondTest'); // Should return the second value now
-  });  
+    const result4 = await piscachio(fn, { key: 'testKeyStale', staleIn: 150 });
+    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3 despite us just now firing off new one because we haven't waited next tick
+    await new Promise((resolve) => setTimeout(() => resolve(null), 50)); // Allow for async execution, but stay within staleIn value
+    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3 because we've updated the staleIn value to a greater value
+    expect(result4).toBe('thirdTest'); // Should return the second value now
+
+    // Drop to a lower staleIn value
+    const result5 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
+    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3
+    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
+    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3, because even though we've lowered the staleIn value, we're still not 100ms past the createdAt value
+    expect(result5).toBe('thirdTest'); // Should return the third value now
+
+    await new Promise((resolve) => setTimeout(() => resolve(null), 200)); //  Wait past staleIn value
+    const result6 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
+    // Will still be 3 because, same as previous examplpes, despite being stale, fn won't execute until next tick
+    expect(fn).toHaveBeenCalledTimes(3); 
+    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
+    expect(fn).toHaveBeenCalledTimes(4); // Now reflects fact that we had exceeded createdAt + staleIn value
+    expect(result6).toBe('thirdTest');
+
+    const result7 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
+    expect(result7).toBe('fourthTest');
+    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
+    const result8 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
+    expect(result8).toBe('fourthTest');
+  });
 });

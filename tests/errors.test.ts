@@ -1,4 +1,4 @@
-import piscachio from '../src';
+import piscachio from '../dist';
 
 describe('error handling', () => {
   it('should handle errors thrown by the function', async () => {

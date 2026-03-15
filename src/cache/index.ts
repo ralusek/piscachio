@@ -13,6 +13,17 @@ export default function createCache() {
       clearTimeout(timeout);
       timeouts.delete(key);
     }
+
+    return null;
+  }
+
+  function clearIfExpired(key: KeyString, now?: number) {
+    now ??= Date.now();
+    const cachedCall = cached.get(key);
+    if (!cachedCall) return null;
+    if (!cachedCall.expiredAt || (cachedCall.expiredAt > now)) return cachedCall;
+    // Is expired, clear and return null.
+    return clear(key);
   }
 
   function run<T>(
@@ -45,34 +56,71 @@ export default function createCache() {
       }, 0);
     });
 
+    // Set promise without waiting for it to resolve, preventing multiple runs while one is in flight
+    // or returned.
     promises.set(key, promise);
 
     if (cachedCall.expiredAt) {
-      timeouts.set(key, setTimeout(() => clear(key), cachedCall.expiredAt - now));
+      timeouts.set(key, setTimeout(() => clearIfExpired(key), cachedCall.expiredAt - now));
     }
 
     return promise;
   }
 
-  const cache: PiscachioCache = {
-    handle: async <T>(key: string, fn: () => Promise<T>, config: PiscachioConfig) => {
-      const cachedCall = cached.get(key);
+  async function handle <T>(key: string, fn: () => Promise<T>, config: PiscachioConfig) {
+    const result = (async () => {
+      let cachedCall = cached.get(key) || null;
       const now = Date.now();
-      if (
-        !cachedCall ||
-        (cachedCall.expiredAt && cachedCall.expiredAt <= now) ||
-        (config.expireIn !== undefined && (cachedCall.createdAt + config.expireIn <= now))
-      ) return run(fn, key, config);
 
+      if (cachedCall) {
+        // Update values that can be overridden by the config
+
+        // Update staleAt if a new staleIn value is set. Note that unlike expiredAt, which is always pushed
+        // back using "now" as a reference, staleAt always uses "createdAt" as a basis. This is because
+        // staleness is a reflection of how old data can be, whereas expiration is a reflection of how
+        // much further into the future to maintain data since the last time it was touched.
+        if (config.staleIn !== undefined) {
+          cachedCall.staleAt = cachedCall.createdAt + config.staleIn;
+        }
+        // Any expiration that is later than current will push it back.
+        if (config.expireIn !== undefined) {
+          cachedCall.expiredAt = Math.max(cachedCall.expiredAt ?? 0, now + config.expireIn);
+        }
+
+        // Clear if expired, in case new expiration is set.
+        cachedCall = clearIfExpired(key, now);
+      }
+      
+      // Handle cache miss or expiration resulting in a new run.
+      if (!cachedCall) return run(fn, key, config);
+
+      // Handle cache hit.
       const promise = promises.get(key)!;
 
+      // If stale, run, but don't await the result.
       if (cachedCall?.staleAt && cachedCall.staleAt <= now) run(fn, key, config);
 
-      // Update values that can be overridden by the config
-      if (config.staleIn !== undefined) cachedCall.staleAt = now + config.staleIn;
-
+      // Return cached call.
       return promise;
-    },
+    })();
+
+    // If rush is true, only return result if it is already resolved.
+    if (config.rush) {
+      // We need to wait a tick so that a run that resolves immediately has a chance
+      // to update the cached call to be resolvedAt(promise resolution propagates
+      // through multiple microtasks even when the underlying promise is already resolved).
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      
+      const cachedCall = cached.get(key);
+      if (cachedCall?.resolvedAt) return cachedCall;
+      return null;
+    }
+
+    return await result;
+  }
+
+  const cache: PiscachioCache = {
+    handle: handle as PiscachioCache['handle'],
   };
 
   return cache;

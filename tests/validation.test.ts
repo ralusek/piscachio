@@ -1,4 +1,4 @@
-import piscachio from '../src';
+import piscachio from '../dist';
 
 describe('validation', () => {
   it('should throw an error when no key is provided', async () => {
