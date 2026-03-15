@@ -27,6 +27,17 @@ export type PiscachioConfig = {
   // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
   // If caller wishes it to be purely observational, simply do not await your logic within the callback.
   onFresh?: PiscachioLifecycleCallback;
+
+  // Called when a value is set in the cache.
+  onValue?: PiscachioLifecycleCallback;
+
+  // Called when a value is set on the cache due to staleness
+  onRefresh?: PiscachioLifecycleCallback;
+
+  // Called when the function run errors. In most cases, these errors will be thrown to the caller, but
+  // on stale hits, we run the function again in the background and catch the errors. Thus, to not lose
+  // them, they will still be captured here.
+  onRunError?: PiscachioLifecycleCallback;
 };
 
 export type PiscachioSetConfig = Omit<PiscachioConfig, 'rush' | 'onMiss' | 'onHit' | 'onStale' | 'onFresh'>;

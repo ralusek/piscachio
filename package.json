@@ -6,12 +6,13 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "pretest": "npm run build",
     "test": "jest",
     "prepublishOnly": "npm run build"
   },
   "keywords": [],
   "author": "Tomas Savigliano <ralusek@gmail.com>",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "@types/jest": "^29.5.1",
     "@types/node": "^18.16.3",

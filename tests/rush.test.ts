@@ -24,4 +24,25 @@ describe('rush functionality', () => {
     expect(result2).toBe('cachedValue');
     expect(fn).toHaveBeenCalledTimes(1); // Should not call fn again
   });
+
+  it('should return the stale cached value when rush is true and trigger a background refresh', async () => {
+    const seedFn = jest.fn().mockResolvedValue('staleValue');
+    const refreshFn = jest.fn().mockImplementation(
+      () => new Promise(resolve => setTimeout(() => resolve('freshValue'), 50))
+    );
+
+    expect(seedFn).toHaveBeenCalledTimes(0);
+    const initialResult = await piscachio(seedFn, { key: 'rushStaleHit', staleIn: 0 });
+    expect(initialResult).toBe('staleValue');
+    expect(seedFn).toHaveBeenCalledTimes(1);
+
+    const rushedResult = await piscachio(refreshFn, { key: 'rushStaleHit', rush: true });
+    expect(rushedResult).toBe('staleValue');
+    expect(refreshFn).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(() => resolve(null), 75));
+
+    const refreshedResult = await piscachio(refreshFn, { key: 'rushStaleHit' });
+    expect(refreshedResult).toBe('freshValue');
+  });
 });
