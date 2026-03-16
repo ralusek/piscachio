@@ -32,6 +32,7 @@ type State<T> = {
   key: KeyString;
   staleIn?: number;
   expireIn?: number;
+  forceStale: boolean;
   touchedAt: number | null;
   version: number;
   committed: CommittedSnapshot<T> | null;
@@ -50,15 +51,19 @@ function createCacheEntry<T>(
     touchedAt: null,
     staleIn: undefined,
     expireIn: undefined,
+    forceStale: false,
     version: 0,
     committed: null,
     pending: null,
   };
 
-  function getStaleAt() {
+  function getStaleAt(now?: number) {
     if (state.staleIn === undefined) return null;
     if (!state.committed) return null;
-    return state.committed.committedAt + state.staleIn;
+    const staleAt = state.committed.committedAt + state.staleIn;
+    if (!state.forceStale) return staleAt;
+    now ??= Date.now();
+    return Math.min(staleAt, now);
   }
 
   function isStale(now?: number) {
@@ -235,6 +240,7 @@ export default function createCache() {
           value,
           committedAt: Date.now(),
         };
+        currentEntry.state.forceStale = false;
         currentEntry.state.pending = null;
 
         resolvePromise(value);
@@ -311,13 +317,26 @@ export default function createCache() {
       value,
       committedAt: Date.now(),
     };
+    entry.state.forceStale = false;
     entry.touch();
     if (config.onValue) sandbox(() => config.onValue!({ key, value }));
+  }
+
+  function forceStale(key: KeyString) {
+    const entry = cachedCalls.get(key) as CacheEntry<any> | undefined;
+    if (!entry || !entry.state.committed) return;
+    entry.state.forceStale = true;
+  }
+
+  function expire(key: KeyString) {
+    clear(key);
   }
 
   const cache: PiscachioCache = {
     handle: handle as PiscachioCache['handle'],
     set,
+    forceStale,
+    expire,
   };
 
   return cache;

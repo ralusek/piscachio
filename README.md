@@ -3,7 +3,7 @@
 
 # piscachio
 
-`piscachio` is a tiny in-memory cache for promise-returning function calls. It deduplicates in-flight work by key, supports stale-while-revalidate refreshes, lets you seed values manually, and exposes lifecycle hooks for instrumentation.
+`piscachio` is a tiny in-memory cache for promise-returning function calls. It deduplicates in-flight work by key, supports stale-while-revalidate refreshes, lets you seed values manually, lets you explicitly mark entries stale or expired, and exposes lifecycle hooks for instrumentation.
 
 It is a good fit when you want:
 
@@ -11,6 +11,7 @@ It is a good fit when you want:
 - cached results reused across later calls in the same process
 - stale values returned immediately while a refresh happens in the background
 - a low-latency "give me only resolved data right now" mode
+- explicit invalidation when outside writes make cached data outdated
 - lightweight observability hooks without pulling in a larger cache framework
 
 It ships CommonJS, ESM, and TypeScript declarations.
@@ -170,6 +171,54 @@ In practice, `set(...)` uses:
 - `expireIn`
 - `onValue`
 
+### `forceStale(key)`
+
+```ts
+import { forceStale } from 'piscachio';
+
+forceStale(['users', userId]);
+```
+
+Marks a resolved entry stale without removing its current value. The next stale-capable read returns the cached value immediately and starts a background refresh.
+
+#### Signature
+
+```ts
+function forceStale(
+  key: string | string[]
+): void;
+```
+
+Notes:
+
+- the entry must already have a committed value
+- the entry must have a `staleIn` value, either from earlier usage or from the next read's config, for the next read to take the stale path
+- the named helper operates on the shared top-level cache; isolated instances expose `instance.forceStale(...)`
+
+### `expire(key)`
+
+```ts
+import { expire } from 'piscachio';
+
+expire(['users', userId]);
+```
+
+Removes the entry immediately. The next read for that key behaves like a cold miss.
+
+#### Signature
+
+```ts
+function expire(
+  key: string | string[]
+): void;
+```
+
+Notes:
+
+- expiring a missing key is a no-op
+- expiring an entry does not cancel underlying work that is already running; it only disconnects future lookups from that entry
+- the named helper operates on the shared top-level cache; isolated instances expose `instance.expire(...)`
+
 ### `isolate()`
 
 ```ts
@@ -178,7 +227,7 @@ import { isolate } from 'piscachio';
 const privateCache = isolate();
 ```
 
-Creates a new private in-memory cache context. The default export and named `set(...)` keep using the shared top-level context, while each isolated instance gets its own cache and its own `instance.set(...)`.
+Creates a new private in-memory cache context. The default export and named helpers keep using the shared top-level context, while each isolated instance gets its own cache and its own `instance.set(...)`, `instance.forceStale(...)`, and `instance.expire(...)`.
 
 #### Signature
 
@@ -186,31 +235,46 @@ Creates a new private in-memory cache context. The default export and named `set
 function isolate(): PiscachioInstance;
 ```
 
-### Cached call metadata
+### Lifecycle payloads
 
-Lifecycle callbacks receive a snapshot shaped like this:
+Lifecycle callbacks receive one of these payload shapes depending on the state being observed:
 
 ```ts
-type PiscachioCachedCall<T> = {
+type PiscachioPendingPayload<T> = {
   key: string;
-  value?: T;
-  resolvedAt?: number;
-  createdAt: number;
+  state: 'pending';
+  startedAt: number;
+  expiresAt: number | null;
+  promise: Promise<T>;
+};
+
+type PiscachioFreshPayload<T> = {
+  key: string;
+  state: 'fresh';
+  value: T;
+  committedAt: number;
   staleAt: number | null;
-  expiredAt: number | null;
+  expiresAt: number | null;
+};
+
+type PiscachioStalePayload<T> = {
+  key: string;
+  state: 'stale';
+  value: T;
+  committedAt: number;
+  staleAt: number | null;
+  expiresAt: number | null;
+  refreshPromise: Promise<T>;
+  refreshStartedAt: number;
 };
 ```
 
-Field meanings:
+Notes:
 
-| Field | Description |
-| --- | --- |
-| `key` | The normalized cache key string. |
-| `value` | The cached value, if one has been resolved or set. |
-| `createdAt` | When the entry was created. |
-| `resolvedAt` | When the value finished resolving. Missing while a run is still in flight. |
-| `staleAt` | Timestamp when the entry becomes stale, or `null` if staleness is disabled. |
-| `expiredAt` | Timestamp when the entry expires, or `null` if expiration is disabled. |
+- `onHit` can receive any of the three payloads above
+- `onFresh` always receives `PiscachioFreshPayload`
+- `onStale` always receives `PiscachioStalePayload`
+- `onMiss`, `onValue`, `onRefresh`, and `onRunError` receive smaller event-specific payloads
 
 ## Examples
 
@@ -404,9 +468,16 @@ const count = await privatePiscachio(async () => 5, { key: 'count' });
 
 ### `staleIn` vs `expireIn`
 
-- `staleIn` is based on the entry's original `createdAt`
-- if later calls pass a new `staleIn`, staleness is recalculated from that original creation time
-- `expireIn` extends how long the entry may continue to live from the current access time
+- `staleIn` is based on when the current committed value was written
+- if later calls pass a new `staleIn`, staleness is recalculated from that current committed timestamp
+- `expireIn` is a sliding deadline that extends from the current access or write time
+
+### Manual invalidation
+
+- `forceStale(...)` keeps the current value but makes the next stale-capable read behave like a stale hit
+- if an entry has no `staleIn` configured yet, `forceStale(...)` does not discard the value; the next read stays fresh until a `staleIn` is provided
+- `expire(...)` removes the entry immediately so the next read is a miss
+- neither helper cancels user code that is already running in the background
 
 ### `set(...)` semantics
 
@@ -417,7 +488,7 @@ const count = await privatePiscachio(async () => 5, { key: 'count' });
 
 ### Scope
 
-- the default export and named `set(...)` use one shared in-memory, process-local cache
+- the default export and named `set(...)`, `forceStale(...)`, and `expire(...)` use one shared in-memory, process-local cache
 - `isolate()` creates additional private cache contexts inside the same process
 - values are not persisted across restarts
 - values are not shared across separate Node.js processes, workers, lambdas, or servers

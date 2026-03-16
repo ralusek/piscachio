@@ -7,6 +7,8 @@ const globalPiscachio = isolate();
 
 export default globalPiscachio;
 export const set = globalPiscachio.set;
+export const forceStale = globalPiscachio.forceStale;
+export const expire = globalPiscachio.expire;
 
 export function isolate(): PiscachioInstance {
   const cache = createCache();
@@ -39,8 +41,18 @@ export function isolate(): PiscachioInstance {
     return value;
   }
 
+  function forceStale(key: string | string[]): void {
+    cache.forceStale(getKeyAsString(key));
+  }
+
+  function expire(key: string | string[]): void {
+    cache.expire(getKeyAsString(key));
+  }
+
   const instance = piscachio as PiscachioInstance;
   instance.set = set;
+  instance.forceStale = forceStale;
+  instance.expire = expire;
 
   return instance;
 }

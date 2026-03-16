@@ -1,3 +1,4 @@
+/** Payload passed to `onHit` when work for the key is already in flight. */
 export type PiscachioPendingPayload<T = any> = {
   key: string;
   state: 'pending';
@@ -6,6 +7,7 @@ export type PiscachioPendingPayload<T = any> = {
   promise: Promise<T>;
 };
 
+/** Payload passed to `onHit` or `onFresh` when a committed value is still fresh. */
 export type PiscachioFreshPayload<T = any> = {
   key: string;
   state: 'fresh';
@@ -15,6 +17,7 @@ export type PiscachioFreshPayload<T = any> = {
   expiresAt: number | null;
 };
 
+/** Payload passed to `onHit` or `onStale` when a stale value is returned during refresh. */
 export type PiscachioStalePayload<T = any> = {
   key: string;
   state: 'stale';
@@ -26,6 +29,7 @@ export type PiscachioStalePayload<T = any> = {
   refreshStartedAt: number;
 };
 
+/** Union of payloads that may be observed by `onHit`. */
 export type PiscachioHitPayload<T = any> =
   | PiscachioPendingPayload<T>
   | PiscachioFreshPayload<T>
@@ -74,6 +78,10 @@ export type PiscachioCache = {
     <T>(key: string, fn: () => T | Promise<T>, config: PiscachioConfig): Promise<T>;
   };
   set: <T>(key: string, value: T, config: PiscachioSetConfig) => void;
+  /** Marks the committed value stale without discarding it. */
+  forceStale: (key: string) => void;
+  /** Removes all cached state for the key immediately. */
+  expire: (key: string) => void;
 };
 
 export type KeyString = string;
@@ -87,5 +95,10 @@ export type PiscachioInstance = {
     fn: () => Promise<T>,
     config: PiscachioConfig,
   ): Promise<T>;
+  /** Writes a resolved value directly into this cache instance. */
   set: <T>(value: T, config: PiscachioSetConfig) => T;
+  /** Marks the current committed value stale without removing it. */
+  forceStale: (key: string | string[]) => void;
+  /** Removes the entry so the next read behaves like a miss. */
+  expire: (key: string | string[]) => void;
 };
