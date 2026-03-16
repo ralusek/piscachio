@@ -19,11 +19,9 @@ export default async function piscachio<T>(
 ) {
   const keyAsString = getKeyAsString(config.key);
 
-  const cachedCall = await cache.handle(keyAsString, fn, config);
+  const value = await cache.handle(keyAsString, fn, config);
 
-  if (cachedCall === null) return null;
-
-  return cachedCall.value as T;
+  return value as T;
 }
 
 export function set<T>(

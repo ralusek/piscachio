@@ -1,4 +1,4 @@
-import { KeyString, PiscachioCache, PiscachioCachedCall, PiscachioConfig, PiscachioSetConfig } from '../types';
+import { KeyString, PiscachioCache,  PiscachioConfig, PiscachioSetConfig } from '../types';
 
 async function sandbox(fn: () => any) {
   try {
@@ -8,172 +8,297 @@ async function sandbox(fn: () => any) {
   }
 }
 
-export default function createCache() {
-  const cached = new Map<KeyString, PiscachioCachedCall<any>>();
-  const promises = new Map<KeyString, Promise<PiscachioCachedCall<any>>>();
-  const timeouts = new Map<KeyString, ReturnType<typeof setTimeout>>();
 
-  function clear(key: KeyString) {
-    cached.delete(key);
-    promises.delete(key);
-    const timeout = timeouts.get(key);
-    if (timeout) {
-      clearTimeout(timeout);
-      timeouts.delete(key);
-    }
+// TODO move all of these types to the types file
 
-    return null;
+type State<T> = {
+  key: KeyString;
+  staleIn?: number;
+  expireIn?: number;
+  touchedAt: number | null;
+  runs: {
+    current: RunRecord<T> | null;
+    stale: RunRecord<T> | null;
+  };
+};
+
+type RunRecord<T> = {
+  value: T;
+  ranAt: number;
+  resolvedAt: number | null;
+  promise: Promise<T>;
+};
+
+type CachedCall<T> = ReturnType<typeof createCachedCall<T>>;
+function createCachedCall<T>(
+  config: {
+    key: KeyString;
+    expireIn?: number;
+    staleIn?: number;
+    onTouch: (cachedCall: CachedCall<T>) => void;
+  },
+) {
+  const state: State<T> = {
+    key: config.key,
+    staleIn: config.staleIn,
+    expireIn: config.expireIn,
+    touchedAt: null,
+    runs: {
+      current: null,
+      stale: null,
+    },
+  };
+ 
+  function getStaleAt() {
+    if (state.staleIn === undefined) return null;
+    if (!state.runs.current?.resolvedAt) return null;
+    return state.runs.current.resolvedAt + state.staleIn;
   }
 
-  function clearIfExpired(key: KeyString, now?: number) {
+  function isStale(now?: number) {
+    const staleAt = getStaleAt();
+    if (!staleAt) return false;
     now ??= Date.now();
-    const cachedCall = cached.get(key);
-    if (!cachedCall) return null;
-    if (!cachedCall.expiredAt || (cachedCall.expiredAt > now)) return cachedCall;
-    // Is expired, clear and return null.
-    return clear(key);
+    return now >= staleAt;
   }
 
-  function store<T>(key: KeyString, config: Pick<PiscachioConfig, 'expireIn' | 'staleIn'>) {
-    clear(key);
-    const now = Date.now();
-    const cachedCall: PiscachioCachedCall<T> = {
-      key,
-      createdAt: now,
-      expiredAt: config.expireIn !== undefined ? now + config.expireIn : null,
-      staleAt: config.staleIn !== undefined ? now + config.staleIn : null,
+  function handleStale() {
+    const isCurrentStale = isStale();
+    if (!isCurrentStale) return { wasStale: false };
+    // Eject current run to stale.
+    state.runs.stale = state.runs.current;
+    state.runs.current = null;
+    return { wasStale: true };
+  }
+
+  function getExpiredAt() {
+    if (state.expireIn === undefined) return null;
+    if (!state.touchedAt) return null;
+    return state.touchedAt + state.expireIn;
+  }
+
+  function isExpired(now?: number) {
+    const expiredAt = getExpiredAt();
+    if (!expiredAt) return false;
+    now ??= Date.now();
+    return now >= expiredAt;
+  }
+
+  function touch() {
+    state.touchedAt = Date.now();
+    config.onTouch(cachedCall);
+  }
+
+  function patchConfig(config: PiscachioConfig) {
+    if (config.expireIn !== undefined) state.expireIn = Math.max(state.expireIn ?? 0, config.expireIn);
+    if (config.staleIn !== undefined) state.staleIn = config.staleIn;
+
+    touch();
+  }
+
+  function getResolvedRun() {
+    const run = state.runs.current?.resolvedAt ? state.runs.current : state.runs.stale;
+    if (!run) return null;
+    return {
+      value: run.value,
+      resolved: run.resolvedAt !== null,
+      promise: run.promise,
+      ranAt: run.ranAt,
+      stale: state.runs.stale === run,
     };
-    cached.set(key, cachedCall);
+  }
 
-    if (cachedCall.expiredAt) {
-      timeouts.set(key, setTimeout(() => clearIfExpired(key), cachedCall.expiredAt - now));
+  const cachedCall = {
+    key: config.key,
+    state,
+
+    isStale,
+    isExpired,
+    getExpiredAt,
+
+    handleStale,
+
+    touch,
+    patchConfig,
+    getResolvedRun,
+  };
+
+  touch();
+
+  return cachedCall;
+}
+
+type Timeout = ReturnType<typeof setTimeout>;
+
+export default function createCache() {
+  const cachedCalls = new Map<KeyString, CachedCall<any>>();
+  const timeouts = new Map<KeyString, Timeout>();
+
+  function patchCachedCall<T>(key: KeyString, config: PiscachioConfig) {
+    let cachedCall = cachedCalls.get(key);
+    if (!cachedCall) {
+      cachedCall = createCachedCall<T>({
+        key,
+        onTouch: (cachedCall: CachedCall<T>) => {
+          const expiredAt = cachedCall.getExpiredAt();
+          if (expiredAt !== null) {
+            scheduleExpiry(key, expiredAt - Date.now());
+          }
+        },
+      });
+      cachedCalls.set(key, cachedCall);
     }
-
+    cachedCall.patchConfig(config);
     return cachedCall;
   }
 
-  function run<T>(
-    fn: () => Promise<T>,
-    key: KeyString,
-    config: PiscachioConfig,
-  ) {
-    const cachedCall = store<T>(key, config);
+  function clear(key: KeyString) {
+    cachedCalls.delete(key);
+    const timeout = timeouts.get(key);
+    if (timeout) clearTimeout(timeout);
+    timeouts.delete(key);
+  }
 
-    const promise = new Promise<PiscachioCachedCall<T>>(async (resolve, reject) => {
+  function scheduleExpiry(key: KeyString, expireIn: number) {
+    // Clear any existing timeout.
+    const timeout = timeouts.get(key);
+    if (timeout) clearTimeout(timeout);
+    const newTimeout = setTimeout(() => {
+      clear(key);
+    }, expireIn);
+    timeouts.set(key, newTimeout);
+  }
+
+
+  async function handle<T>(key: KeyString, fn: () => Promise<T>, config: PiscachioConfig) {
+    let cachedCall = patchCachedCall<T>(key, config);
+
+    // Replace if expired.
+    if (cachedCall.isExpired()) {
+      cachedCalls.delete(key);
+      cachedCall = patchCachedCall<T>(key, config);
+      cachedCalls.set(key, cachedCall);
+    }
+
+    ///////////////////////////
+    // Cache Miss
+    ///////////////////////////
+    if (!cachedCall.state.runs.current?.promise && !cachedCall.state.runs.stale?.promise) {
+      const promise = run(key, fn, config);
+      // We do this after beginning the run, because there are multiple race conditions to account for if this
+      // does not begin running immediately. We do not await the run, and call onMiss immediately, which is fine.
+      await sandbox(() => config?.onMiss!({ key }));
+      if (config?.rush) return null;
+      return await promise;
+    }
+
+    ///////////////////////////
+    // Cache Hit
+    ///////////////////////////
+  
+
+    const { wasStale } = cachedCall.handleStale();
+    // Stale Hit
+    if (wasStale) {
+      await sandbox(() => config?.onStale!({ key, value: cachedCall.state.runs.stale?.value, resolved: cachedCall.state.runs.stale?.resolvedAt !== null, promise: cachedCall.state.runs.stale?.promise! }));
+      // If stale, run, but don't await the result.
+      run(key, fn, config)
+      .then((cachedCall) => {
+        if (config?.onRefresh) sandbox(() => config.onRefresh!(cachedCall.dump()));
+      });
+    } else {
+      await sandbox(() => config?.onFresh!({ key, value: cachedCall.state.runs.current?.value, resolved: cachedCall.state.runs.current?.resolvedAt !== null, promise: cachedCall.state.runs.current?.promise! }));
+    }
+
+    let resolvedRun = cachedCall.getResolvedRun();
+
+    // If we don't get a direct hit to a resolved value, wait for one tick to see if the run just needs to resolve
+    // on next tick, in which case we'll just count it as a direct hit.
+    if (!resolvedRun) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      resolvedRun = cachedCall.getResolvedRun();
+    }
+
+    // If there is no resolved run, then there MUST be a current run in flight.
+    await sandbox(() => config?.onHit!(
+      resolvedRun ? {
+        key,
+        ...resolvedRun,
+      } : {
+        key,
+        value: undefined,
+        resolved: false,
+        promise: cachedCall.state.runs.current?.promise!,
+        stale: false,
+      },
+    ));
+
+    // Wait until after onHit call.
+    if (resolvedRun) return resolvedRun.value;
+
+    // If we're rushing, return null immediately, because if it was a direct hit, we would have already returned.
+    if (config.rush) return null;
+
+    // Only fall back on in-flight promise if we don't have a stale value and are not rushing
+    return await cachedCall.state.runs.current?.promise;
+  }
+
+  async function run<T>(key: KeyString, fn: () => Promise<T>, config: PiscachioConfig) {
+    const cachedCall = cachedCalls.get(key);
+    if (!cachedCall) throw new Error(`Cached call not found for key: ${key}`); // Should not be possible
+    const promise = new Promise(async (resolve, reject) => {
       try {
         const value = await fn();
-        cachedCall.value = value;
-        cachedCall.resolvedAt = Date.now();
-        resolve(cachedCall);
-        if (config?.onValue) await sandbox(() => config.onValue!({ ...cachedCall }));
-      } catch (err) {
+        const currentCachedCall = cachedCalls.get(key);
+
+        // This is to account for the scenario where a current run was replaced with a `set` call
+        if (currentCachedCall?.state.runs.current?.promise !== promise) {
+          resolve(value);
+          return;
+        }
+        cachedCall.state.runs.current!.resolvedAt = Date.now();
+        cachedCall.state.runs.current!.value = value;
+
+        cachedCall.state.runs.stale = null;
+
+        resolve(value);
+        if (config?.onValue) await sandbox(() => config.onValue!({ key, value }));
+      } catch (error) {
+        if (config?.onRunError) await sandbox(() => config.onRunError!({ key, error }));
+        const currentCachedCall = cachedCalls.get(key);
+        // This is to account for the scenario where a current run was replaced with a `set` call
+        if (currentCachedCall?.state.runs.current?.promise !== promise) {
+          reject(error);
+          return;
+        }
+        reject(error);
         clear(key);
-        if (config?.onRunError) await sandbox(() => config.onRunError!({ ...cachedCall }));
-        reject(err);
       }
     });
 
-    // Set promise without waiting for it to resolve, preventing multiple runs while one is in flight
-    // or returned.
-    promises.set(key, promise);
-
-    return promise;
-  }
-
-  async function handle <T>(key: string, fn: () => Promise<T>, config: PiscachioConfig) {
-    // We await the async function but not the "promise." This allows the lifecycle callbacks to be awaited
-    // but we still don't wait for the actual run execution to complete. This allows for the "rush" behavior
-    // to work as expected.
-    const { promise, cachedCallSnapshot } = await (async () => {
-      let cachedCall = cached.get(key) || null;
-      const now = Date.now();
-
-      if (cachedCall) {
-        // Update values that can be overridden by the config
-
-        // Update staleAt if a new staleIn value is set. Note that unlike expiredAt, which is always pushed
-        // back using "now" as a reference, staleAt always uses "createdAt" as a basis. This is because
-        // staleness is a reflection of how old data can be, whereas expiration is a reflection of how
-        // much further into the future to maintain data since the last time it was touched.
-        if (config.staleIn !== undefined) {
-          cachedCall.staleAt = cachedCall.createdAt + config.staleIn;
-        }
-        // Any expiration that is later than current will push it back.
-        if (config.expireIn !== undefined) {
-          cachedCall.expiredAt = Math.max(cachedCall.expiredAt ?? 0, now + config.expireIn);
-        }
-
-        // Clear if expired, in case new expiration is set.
-        cachedCall = clearIfExpired(key, now);
-      }
-      
-      // Handle cache miss or expiration resulting in a new run.
-      if (!cachedCall) {
-        const result = run(fn, key, config);
-        if (config?.onMiss) await sandbox(() => config.onMiss!({ ...cached.get(key)! }));
-        return { promise: result, cachedCallSnapshot: null };
-      }
-
-      // Handle cache hit.
-      const promise = promises.get(key)!;
-
-      if (config?.onHit) await sandbox(() => config.onHit!({ ...cachedCall }));
-
-      // If stale, run, but don't await the result.
-      if (
-        (cachedCall?.staleAt && cachedCall.staleAt <= now) &&
-        // Only consider stale if cached call is not already in flight.
-        !!cachedCall.resolvedAt
-      ) {
-        if (config?.onStale) await sandbox(() => config.onStale!({ ...cachedCall }));
-        run(fn, key, config)
-        .then((cachedCall) => {
-          if (config?.onRefresh) sandbox(() => config.onRefresh!({ ...cachedCall }));
-        })
-        .catch(() => {});
-      }
-      else {
-        if (config?.onFresh) await sandbox(() => config.onFresh!({ ...cachedCall }));
-      }
-
-      // Return cached call.
-      return {
-        // Will either be the resolved value or the in-flight promise.
-        promise,
-        // We return the snapshot because if it was stale, the "run" call will have cleared it.
-        // We still need it, however, to handle config.rushed == true.
-        cachedCallSnapshot: cachedCall,
-      };
-    })();
-
-    // If rush is true, only return result if it is already resolved.
-    if (config.rush) {
-      // Because stale hits will have cleared the cached calls in the map, we utilize the snapshot.
-      if (cachedCallSnapshot?.resolvedAt) return { ...cachedCallSnapshot };
-
-      // If not in snapshot, we still allow one tick to resolve the promise and pull from cached map.
-
-      // We wait a tick so that a run that resolves immediately has a chance
-      // to update the cached call to be resolvedAt (promise resolution propagates
-      // through multiple microtasks even when the underlying promise is already resolved).
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      
-      const cachedCall = cached.get(key);
-      if (cachedCall?.resolvedAt) return cachedCall;
-      return null;
+    cachedCall.state.runs.current = {
+      value: undefined as T,
+      ranAt: Date.now(),
+      resolvedAt: null,
+      promise,
     }
 
-    return await promise;
+    return cachedCall.state.runs.current!.promise;
   }
 
   function set<T>(key: KeyString, value: T, config: PiscachioSetConfig) {
-    const cachedCall = store<T>(key, config);
-    cachedCall.value = value;
-    cachedCall.resolvedAt = cachedCall.createdAt;
-    promises.set(key, Promise.resolve(cachedCall));
-    if (config?.onValue) sandbox(() => config.onValue!({ ...cachedCall }));
-    return cachedCall;
+    const cachedCall = patchCachedCall<T>(key, config);
+    cachedCall.state.runs.current = {
+      value,
+      ranAt: Date.now(),
+      resolvedAt: Date.now(),
+      promise: Promise.resolve(value),
+    }
+    cachedCall.touch();
+    cachedCall.state.runs.stale = null;
+    if (config?.onValue) sandbox(() => config.onValue!({ key, value }));
   }
+
 
   const cache: PiscachioCache = {
     handle: handle as PiscachioCache['handle'],

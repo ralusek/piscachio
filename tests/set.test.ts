@@ -74,6 +74,38 @@ describe('set functionality', () => {
     expect(result).toBe('set-result');
   });
 
+  it('should keep the set value after an overwritten in-flight run later resolves', async () => {
+    const slowFn = jest.fn().mockImplementation(
+      () => new Promise(resolve => setTimeout(() => resolve('slow-result'), 50))
+    );
+
+    const inFlightPromise = piscachio(slowFn, { key: 'set-in-flight-resolve-after-overwrite' });
+    set('set-result', { key: 'set-in-flight-resolve-after-overwrite' });
+
+    await expect(inFlightPromise).resolves.toBe('slow-result');
+
+    const fn = jest.fn().mockResolvedValue('should not be called');
+    const result = await piscachio(fn, { key: 'set-in-flight-resolve-after-overwrite' });
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(result).toBe('set-result');
+  });
+
+  it('should keep the set value after an overwritten in-flight run later rejects', async () => {
+    const slowFn = jest.fn().mockImplementation(
+      () => new Promise((resolve, reject) => setTimeout(() => reject(new Error('set overwrite error')), 50))
+    );
+
+    const inFlightPromise = piscachio(slowFn, { key: 'set-in-flight-reject-after-overwrite' });
+    set('set-result', { key: 'set-in-flight-reject-after-overwrite' });
+
+    await expect(inFlightPromise).rejects.toThrow('set overwrite error');
+
+    const fn = jest.fn().mockResolvedValue('should not be called');
+    const result = await piscachio(fn, { key: 'set-in-flight-reject-after-overwrite' });
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(result).toBe('set-result');
+  });
+
   it('should support staleIn and trigger re-fetch on next piscachio call', async () => {
     set('stale-value', { key: 'set-stale', staleIn: 0 });
 
