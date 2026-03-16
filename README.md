@@ -170,6 +170,22 @@ In practice, `set(...)` uses:
 - `expireIn`
 - `onValue`
 
+### `isolate()`
+
+```ts
+import { isolate } from 'piscachio';
+
+const privateCache = isolate();
+```
+
+Creates a new private in-memory cache context. The default export and named `set(...)` keep using the shared top-level context, while each isolated instance gets its own cache and its own `instance.set(...)`.
+
+#### Signature
+
+```ts
+function isolate(): PiscachioInstance;
+```
+
 ### Cached call metadata
 
 Lifecycle callbacks receive a snapshot shaped like this:
@@ -281,6 +297,23 @@ console.log(value);
 // "new"
 ```
 
+### Private cache contexts
+
+```ts
+import piscachio, { isolate } from 'piscachio';
+
+const privatePiscachio = isolate();
+
+await piscachio(() => Promise.resolve('shared'), { key: 'scope-demo' });
+await privatePiscachio(() => Promise.resolve('private'), { key: 'scope-demo' });
+
+const shared = await piscachio(() => Promise.resolve('should not run'), { key: 'scope-demo' });
+const privateValue = await privatePiscachio(() => Promise.resolve('should not run'), { key: 'scope-demo' });
+
+console.log(shared, privateValue);
+// "shared" "private"
+```
+
 ### Instrumentation
 
 ```ts
@@ -345,6 +378,16 @@ const count = await piscachio(async () => 5, {
 //    ^? number | null
 ```
 
+Isolated instances preserve the same call signatures:
+
+```ts
+import { isolate } from 'piscachio';
+
+const privatePiscachio = isolate();
+const count = await privatePiscachio(async () => 5, { key: 'count' });
+//    ^? number
+```
+
 ## Behavior Notes
 
 ### Key rules
@@ -374,7 +417,8 @@ const count = await piscachio(async () => 5, {
 
 ### Scope
 
-- the cache is in-memory and process-local
+- the default export and named `set(...)` use one shared in-memory, process-local cache
+- `isolate()` creates additional private cache contexts inside the same process
 - values are not persisted across restarts
 - values are not shared across separate Node.js processes, workers, lambdas, or servers
 

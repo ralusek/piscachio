@@ -1,4 +1,4 @@
-import piscachio from '../dist';
+import piscachio, { isolate } from '../dist';
 
 describe('basic piscachio functionality', () => {
   it('should not throw a typescript error for return type', async () => {
@@ -8,6 +8,19 @@ describe('basic piscachio functionality', () => {
       }, { key: ['testKey', 'a'] });
     
       // Type check
+      const z: number = y;
+    }
+  });
+
+  it('should not throw a typescript error for isolated instances', async () => {
+    async function a() {
+      const isolated = isolate();
+      isolated.set(5, { key: ['testKey', 'isolated'] });
+
+      const y = await isolated(async () => {
+        return 5;
+      }, { key: ['testKey', 'isolated'] });
+
       const z: number = y;
     }
   });

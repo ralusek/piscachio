@@ -77,3 +77,15 @@ export type PiscachioCache = {
 };
 
 export type KeyString = string;
+
+export type PiscachioInstance = {
+  <T>(
+    fn: () => Promise<T>,
+    config: PiscachioConfig & { rush: true },
+  ): Promise<T | null>;
+  <T>(
+    fn: () => Promise<T>,
+    config: PiscachioConfig,
+  ): Promise<T>;
+  set: <T>(value: T, config: PiscachioSetConfig) => T;
+};

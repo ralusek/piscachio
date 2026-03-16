@@ -1,36 +1,48 @@
 // Types
-import { KeyString, PiscachioConfig, PiscachioSetConfig } from './types';
+import { KeyString, PiscachioConfig, PiscachioInstance, PiscachioSetConfig } from './types';
 
 import createCache from './cache';
 
-const cache = createCache();
+const globalPiscachio = isolate();
 
-export default async function piscachio<T>(
-  fn: () => Promise<T>,
-  config: PiscachioConfig & { rush: true },
-): Promise<T | null>;
-export default async function piscachio<T>(
-  fn: () => Promise<T>,
-  config: PiscachioConfig,
-): Promise<T>;
-export default async function piscachio<T>(
-  fn: () => Promise<T>,
-  config: PiscachioConfig,
-) {
-  const keyAsString = getKeyAsString(config.key);
+export default globalPiscachio;
+export const set = globalPiscachio.set;
 
-  const value = await cache.handle(keyAsString, fn, config);
+export function isolate(): PiscachioInstance {
+  const cache = createCache();
 
-  return value as T;
-}
+  async function piscachio<T>(
+    fn: () => Promise<T>,
+    config: PiscachioConfig & { rush: true },
+  ): Promise<T | null>;
+  async function piscachio<T>(
+    fn: () => Promise<T>,
+    config: PiscachioConfig,
+  ): Promise<T>;
+  async function piscachio<T>(
+    fn: () => Promise<T>,
+    config: PiscachioConfig,
+  ) {
+    const keyAsString = getKeyAsString(config.key);
 
-export function set<T>(
-  value: T,
-  config: PiscachioSetConfig,
-): T {
-  const keyAsString = getKeyAsString(config.key);
-  cache.set(keyAsString, value, config);
-  return value;
+    const value = await cache.handle(keyAsString, fn, config);
+
+    return value as T;
+  }
+
+  function set<T>(
+    value: T,
+    config: PiscachioSetConfig,
+  ): T {
+    const keyAsString = getKeyAsString(config.key);
+    cache.set(keyAsString, value, config);
+    return value;
+  }
+
+  const instance = piscachio as PiscachioInstance;
+  instance.set = set;
+
+  return instance;
 }
 
 function getKeyAsString(key: string | string[]): KeyString {
