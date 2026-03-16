@@ -73,10 +73,16 @@ function createCacheEntry<T>(
     return now >= staleAt;
   }
 
+  function getExpiryBase() {
+    if (!state.committed) return null;
+    return Math.max(state.touchedAt ?? Number.NEGATIVE_INFINITY, state.committed.committedAt);
+  }
+
   function getExpiredAt() {
     if (state.expireIn === undefined) return null;
-    if (state.touchedAt === null) return null;
-    return state.touchedAt + state.expireIn;
+    const expiryBase = getExpiryBase();
+    if (expiryBase === null) return null;
+    return expiryBase + state.expireIn;
   }
 
   function isExpired(now?: number) {
@@ -170,24 +176,56 @@ export default function createCache() {
     const timeout = timeouts.get(key);
     if (timeout) clearTimeout(timeout);
     const newTimeout = setTimeout(() => {
-      clear(key);
+      expireValue(key);
     }, Math.max(0, expireIn));
+
+    // Cache cleanup should not keep a consumer's process alive; if the process exits
+    // before this fires, the in-memory cache disappears with it anyway.
+    if (typeof newTimeout === 'object' && newTimeout !== null && 'unref' in newTimeout) {
+      newTimeout.unref?.();
+    }
+
     timeouts.set(key, newTimeout);
+  }
+
+  function syncExpiry<T>(key: KeyString, entry: CacheEntry<T>) {
+    const expiredAt = entry.getExpiredAt();
+    if (expiredAt === null) {
+      const timeout = timeouts.get(key);
+      if (timeout) clearTimeout(timeout);
+      timeouts.delete(key);
+      return;
+    }
+
+    scheduleExpiry(key, expiredAt - Date.now());
+  }
+
+  function expireValue(key: KeyString) {
+    const entry = cachedCalls.get(key);
+    if (!entry) return;
+
+    if (entry.state.pending) {
+      entry.state.committed = null;
+      entry.state.forceStale = false;
+      syncExpiry(key, entry);
+      return;
+    }
+
+    clear(key);
   }
 
   function prepareEntry<T>(key: KeyString, config: PiscachioConfig) {
     let entry = cachedCalls.get(key) as CacheEntry<T> | undefined;
     if (entry?.isExpired()) {
-      clear(key);
-      entry = undefined;
+      expireValue(key);
+      entry = cachedCalls.get(key) as CacheEntry<T> | undefined;
     }
 
     if (!entry) {
       entry = createCacheEntry<T>({
         key,
         onTouch: (entry) => {
-          const expiredAt = entry.getExpiredAt();
-          if (expiredAt !== null) scheduleExpiry(key, expiredAt - Date.now());
+          syncExpiry(key, entry);
         },
       });
       cachedCalls.set(key, entry);
@@ -242,6 +280,7 @@ export default function createCache() {
         };
         currentEntry.state.forceStale = false;
         currentEntry.state.pending = null;
+        syncExpiry(key, currentEntry);
 
         resolvePromise(value);
 

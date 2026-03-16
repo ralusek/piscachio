@@ -116,4 +116,92 @@ describe('expire functionality', () => {
     // Clean up the replacement timer so Jest can exit without open handles.
     expire('expire-timer');
   });
+
+  it('should keep deduplicating a pending miss even after expireIn elapses', async () => {
+    const resolvers: Array<(value: string) => void> = [];
+    const fn = jest.fn().mockImplementation(
+      () => new Promise<string>((resolve) => {
+        resolvers.push(resolve);
+      })
+    );
+
+    const firstPromise = piscachio(fn, { key: 'expire-pending-dedupe', expireIn: 10 });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const secondPromise = piscachio(fn, { key: 'expire-pending-dedupe', expireIn: 10 });
+
+    resolvers.forEach((resolve, index) => {
+      resolve(`value-${index + 1}`);
+    });
+
+    const results = await Promise.all([firstPromise, secondPromise]);
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(results).toEqual(['value-1', 'value-1']);
+
+    expire('expire-pending-dedupe');
+  });
+
+  it('should cache the resolved value from a slow miss even if expireIn elapses before it resolves', async () => {
+    const resolvers: Array<(value: string) => void> = [];
+    const fn = jest.fn().mockImplementation(
+      () => new Promise<string>((resolve) => {
+        resolvers.push(resolve);
+      })
+    );
+
+    const firstPromise = piscachio(fn, { key: 'expire-pending-commit', expireIn: 10 });
+
+    // Wait > expireIn to make sure we're in expired territory.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    resolvers[0]('first');
+    await expect(firstPromise).resolves.toBe('first');
+
+    const secondPromise = piscachio(fn, { key: 'expire-pending-commit', expireIn: 10 });
+
+    if (resolvers[1]) resolvers[1]('second');
+
+    await expect(secondPromise).resolves.toBe('first');
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    expire('expire-pending-commit');
+  });
+
+  it('should reuse an in-flight refresh after the committed value expires', async () => {
+    let resolveRefresh!: (value: string) => void;
+    const seedFn = jest.fn().mockResolvedValue('first');
+    const refreshFn = jest.fn().mockImplementation(
+      () => new Promise<string>((resolve) => {
+        resolveRefresh = resolve;
+      })
+    );
+
+    await piscachio(seedFn, { key: 'expire-refresh-pending', staleIn: 0, expireIn: 10 });
+
+    const staleResult = await piscachio(refreshFn, {
+      key: 'expire-refresh-pending',
+      staleIn: 0,
+      expireIn: 10,
+    });
+
+    expect(staleResult).toBe('first');
+    expect(refreshFn).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const secondPromise = piscachio(refreshFn, {
+      key: 'expire-refresh-pending',
+      staleIn: 0,
+      expireIn: 10,
+    });
+
+    resolveRefresh('second');
+
+    await expect(secondPromise).resolves.toBe('second');
+    expect(refreshFn).toHaveBeenCalledTimes(1);
+
+    expire('expire-refresh-pending');
+  });
 });

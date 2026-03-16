@@ -198,6 +198,53 @@ describe('lifecycle callbacks', () => {
       await expect(payload.promise).resolves.toBe('value');
     });
 
+    it('should keep expiresAt null for a pending miss even when expireIn is configured', async () => {
+      const onHit = jest.fn();
+      let resolveValue!: (value: string) => void;
+      const fn = jest.fn().mockImplementation(
+        () => new Promise<string>((resolve) => {
+          resolveValue = resolve;
+        })
+      );
+
+      const firstPromise = piscachio(fn, { key: 'lifecycle-hit-pending-expire', expireIn: 25 });
+      const secondPromise = piscachio(fn, {
+        key: 'lifecycle-hit-pending-expire',
+        expireIn: 25,
+        onHit,
+      });
+
+      const payload = onHit.mock.calls[0][0];
+      expect(payload).toEqual(expect.objectContaining({
+        key: 'lifecycle-hit-pending-expire',
+        state: 'pending',
+        startedAt: expect.any(Number),
+        expiresAt: null,
+      }));
+
+      resolveValue('value');
+      await expect(firstPromise).resolves.toBe('value');
+      await expect(secondPromise).resolves.toBe('value');
+    });
+
+    it('should expose expiresAt on a fresh payload when expireIn is configured', async () => {
+      const onHit = jest.fn();
+      const fn = jest.fn().mockResolvedValue('value');
+
+      await piscachio(fn, { key: 'lifecycle-hit-fresh-expire', expireIn: 50 });
+      await piscachio(fn, { key: 'lifecycle-hit-fresh-expire', expireIn: 50, onHit });
+
+      const payload = onHit.mock.calls[0][0];
+      expect(payload).toEqual(expect.objectContaining({
+        key: 'lifecycle-hit-fresh-expire',
+        state: 'fresh',
+        value: 'value',
+        committedAt: expect.any(Number),
+        expiresAt: expect.any(Number),
+      }));
+      expect(payload.expiresAt).toBeGreaterThan(payload.committedAt);
+    });
+
     it('should keep returning the stale payload while a refresh is already in flight', async () => {
       const onHit = jest.fn();
       const seedFn = jest.fn().mockResolvedValue('first');

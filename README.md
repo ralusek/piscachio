@@ -35,6 +35,12 @@ It ships CommonJS, ESM, and TypeScript declarations.
 npm install piscachio
 ```
 
+CommonJS:
+
+```js
+const { default: piscachio, set, forceStale, expire, isolate } = require('piscachio');
+```
+
 ## Quick Start
 
 ```ts
@@ -92,7 +98,7 @@ Each cache entry is identified by a `key` and can move through three useful stat
 Two config options control those transitions:
 
 - `staleIn`: after this many milliseconds, the value is still returned but a refresh is triggered on the next read
-- `expireIn`: after this many milliseconds, the entry is no longer used and the next read behaves like a miss
+- `expireIn`: after this many milliseconds without another access or write after commit, a committed value is no longer used and the next read behaves like a miss
 
 This gives you stale-while-revalidate semantics:
 
@@ -133,7 +139,7 @@ function piscachio<T>(
 | --- | --- | --- |
 | `key` | `string \| string[]` | Required cache key. Array keys are joined internally with `::`. |
 | `staleIn` | `number` | Milliseconds until the value becomes stale. Stale values are still returned, but a refresh is triggered on the next read. |
-| `expireIn` | `number` | Milliseconds until the entry is considered expired. The next read behaves like a miss. |
+| `expireIn` | `number` | Milliseconds until a committed value is considered expired. Reads and writes push the deadline back. Pending misses stay deduplicated until they resolve. |
 | `rush` | `boolean` | Return only a resolved value that is already available. If nothing resolved is available yet, return `null` while still starting or continuing the work. |
 | `onMiss` | `(cachedCall) => void \| Promise<void>` | Called when no usable entry exists and a new run starts. |
 | `onHit` | `(cachedCall) => void \| Promise<void>` | Called whenever a cache entry exists, whether fresh or stale. |
@@ -470,7 +476,9 @@ const count = await privatePiscachio(async () => 5, { key: 'count' });
 
 - `staleIn` is based on when the current committed value was written
 - if later calls pass a new `staleIn`, staleness is recalculated from that current committed timestamp
-- `expireIn` is a sliding deadline that extends from the current access or write time
+- `expireIn` starts once a value has been committed
+- `expireIn` behaves like time-to-idle after commit: reads and writes push the deadline back
+- the deadline is calculated from the later of the current committed time and the most recent access or write
 
 ### Manual invalidation
 
