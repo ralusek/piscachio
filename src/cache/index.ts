@@ -1,4 +1,12 @@
-import { KeyString, PiscachioCache,  PiscachioConfig, PiscachioSetConfig } from '../types';
+import {
+  KeyString,
+  PiscachioCache,
+  PiscachioConfig,
+  PiscachioFreshPayload,
+  PiscachioPendingPayload,
+  PiscachioSetConfig,
+  PiscachioStalePayload,
+} from '../types';
 
 async function sandbox(fn: () => any) {
   try {
@@ -8,149 +16,143 @@ async function sandbox(fn: () => any) {
   }
 }
 
+type CommittedSnapshot<T> = {
+  value: T;
+  committedAt: number;
+};
 
-// TODO move all of these types to the types file
+type PendingRun<T> = {
+  promise: Promise<T>;
+  startedAt: number;
+  kind: 'miss' | 'refresh';
+  version: number;
+};
 
 type State<T> = {
   key: KeyString;
   staleIn?: number;
   expireIn?: number;
   touchedAt: number | null;
-  runs: {
-    current: RunRecord<T> | null;
-    stale: RunRecord<T> | null;
-  };
+  version: number;
+  committed: CommittedSnapshot<T> | null;
+  pending: PendingRun<T> | null;
 };
 
-type RunRecord<T> = {
-  value: T;
-  ranAt: number;
-  resolvedAt: number | null;
-  promise: Promise<T>;
-};
-
-type CachedCall<T> = ReturnType<typeof createCachedCall<T>>;
-function createCachedCall<T>(
+type CacheEntry<T> = ReturnType<typeof createCacheEntry<T>>;
+function createCacheEntry<T>(
   config: {
     key: KeyString;
-    expireIn?: number;
-    staleIn?: number;
-    onTouch: (cachedCall: CachedCall<T>) => void;
+    onTouch: (entry: CacheEntry<T>) => void;
   },
 ) {
   const state: State<T> = {
     key: config.key,
-    staleIn: config.staleIn,
-    expireIn: config.expireIn,
     touchedAt: null,
-    runs: {
-      current: null,
-      stale: null,
-    },
+    staleIn: undefined,
+    expireIn: undefined,
+    version: 0,
+    committed: null,
+    pending: null,
   };
- 
+
   function getStaleAt() {
     if (state.staleIn === undefined) return null;
-    if (!state.runs.current?.resolvedAt) return null;
-    return state.runs.current.resolvedAt + state.staleIn;
+    if (!state.committed) return null;
+    return state.committed.committedAt + state.staleIn;
   }
 
   function isStale(now?: number) {
     const staleAt = getStaleAt();
-    if (!staleAt) return false;
+    if (staleAt === null) return false;
     now ??= Date.now();
     return now >= staleAt;
   }
 
-  function handleStale() {
-    const isCurrentStale = isStale();
-    if (!isCurrentStale) return { wasStale: false };
-    // Eject current run to stale.
-    state.runs.stale = state.runs.current;
-    state.runs.current = null;
-    return { wasStale: true };
-  }
-
   function getExpiredAt() {
     if (state.expireIn === undefined) return null;
-    if (!state.touchedAt) return null;
+    if (state.touchedAt === null) return null;
     return state.touchedAt + state.expireIn;
   }
 
   function isExpired(now?: number) {
     const expiredAt = getExpiredAt();
-    if (!expiredAt) return false;
+    if (expiredAt === null) return false;
     now ??= Date.now();
     return now >= expiredAt;
   }
 
   function touch() {
     state.touchedAt = Date.now();
-    config.onTouch(cachedCall);
+    config.onTouch(entry);
   }
 
   function patchConfig(config: PiscachioConfig) {
     if (config.expireIn !== undefined) state.expireIn = Math.max(state.expireIn ?? 0, config.expireIn);
     if (config.staleIn !== undefined) state.staleIn = config.staleIn;
-
     touch();
   }
 
-  function getResolvedRun() {
-    const run = state.runs.current?.resolvedAt ? state.runs.current : state.runs.stale;
-    if (!run) return null;
+  function getPendingPayload(): PiscachioPendingPayload<T> | null {
+    if (!state.pending) return null;
     return {
-      value: run.value,
-      resolved: run.resolvedAt !== null,
-      promise: run.promise,
-      ranAt: run.ranAt,
-      stale: state.runs.stale === run,
+      key: state.key,
+      state: 'pending',
+      startedAt: state.pending.startedAt,
+      expiresAt: getExpiredAt(),
+      promise: state.pending.promise,
     };
   }
 
-  const cachedCall = {
+  function getFreshPayload(): PiscachioFreshPayload<T> | null {
+    if (!state.committed) return null;
+    return {
+      key: state.key,
+      state: 'fresh',
+      value: state.committed.value,
+      committedAt: state.committed.committedAt,
+      staleAt: getStaleAt(),
+      expiresAt: getExpiredAt(),
+    };
+  }
+
+  function getStalePayload(): PiscachioStalePayload<T> | null {
+    if (!state.committed || !state.pending) return null;
+    return {
+      key: state.key,
+      state: 'stale',
+      value: state.committed.value,
+      committedAt: state.committed.committedAt,
+      staleAt: getStaleAt(),
+      expiresAt: getExpiredAt(),
+      refreshPromise: state.pending.promise,
+      refreshStartedAt: state.pending.startedAt,
+    };
+  }
+
+  const entry = {
     key: config.key,
     state,
 
+    getStaleAt,
     isStale,
-    isExpired,
     getExpiredAt,
-
-    handleStale,
+    isExpired,
 
     touch,
     patchConfig,
-    getResolvedRun,
+    getPendingPayload,
+    getFreshPayload,
+    getStalePayload,
   };
 
-  touch();
-
-  return cachedCall;
+  return entry;
 }
 
 type Timeout = ReturnType<typeof setTimeout>;
 
 export default function createCache() {
-  const cachedCalls = new Map<KeyString, CachedCall<any>>();
+  const cachedCalls = new Map<KeyString, CacheEntry<any>>();
   const timeouts = new Map<KeyString, Timeout>();
-
-  function patchCachedCall<T>(key: KeyString, config: PiscachioConfig) {
-    let cachedCall = cachedCalls.get(key);
-    if (!cachedCall) {
-      cachedCall = createCachedCall<T>({
-        key,
-        onTouch: (cachedCall: CachedCall<T>) => {
-          const expiredAt = cachedCall.getExpiredAt();
-          if (expiredAt !== null) {
-            scheduleExpiry(key, expiredAt - Date.now());
-          }
-        },
-      });
-      cachedCalls.set(key, cachedCall);
-    }
-    cachedCall.patchConfig(config);
-    return cachedCall;
-  }
 
   function clear(key: KeyString) {
     cachedCalls.delete(key);
@@ -160,145 +162,158 @@ export default function createCache() {
   }
 
   function scheduleExpiry(key: KeyString, expireIn: number) {
-    // Clear any existing timeout.
     const timeout = timeouts.get(key);
     if (timeout) clearTimeout(timeout);
     const newTimeout = setTimeout(() => {
       clear(key);
-    }, expireIn);
+    }, Math.max(0, expireIn));
     timeouts.set(key, newTimeout);
   }
 
-
-  async function handle<T>(key: KeyString, fn: () => Promise<T>, config: PiscachioConfig) {
-    let cachedCall = patchCachedCall<T>(key, config);
-
-    // Replace if expired.
-    if (cachedCall.isExpired()) {
-      cachedCalls.delete(key);
-      cachedCall = patchCachedCall<T>(key, config);
-      cachedCalls.set(key, cachedCall);
+  function prepareEntry<T>(key: KeyString, config: PiscachioConfig) {
+    let entry = cachedCalls.get(key) as CacheEntry<T> | undefined;
+    if (entry?.isExpired()) {
+      clear(key);
+      entry = undefined;
     }
 
-    ///////////////////////////
-    // Cache Miss
-    ///////////////////////////
-    if (!cachedCall.state.runs.current?.promise && !cachedCall.state.runs.stale?.promise) {
-      const promise = run(key, fn, config);
-      // We do this after beginning the run, because there are multiple race conditions to account for if this
-      // does not begin running immediately. We do not await the run, and call onMiss immediately, which is fine.
-      await sandbox(() => config?.onMiss!({ key }));
-      if (config?.rush) return null;
-      return await promise;
-    }
-
-    ///////////////////////////
-    // Cache Hit
-    ///////////////////////////
-  
-
-    const { wasStale } = cachedCall.handleStale();
-    // Stale Hit
-    if (wasStale) {
-      await sandbox(() => config?.onStale!({ key, value: cachedCall.state.runs.stale?.value, resolved: cachedCall.state.runs.stale?.resolvedAt !== null, promise: cachedCall.state.runs.stale?.promise! }));
-      // If stale, run, but don't await the result.
-      run(key, fn, config)
-      .then((cachedCall) => {
-        if (config?.onRefresh) sandbox(() => config.onRefresh!(cachedCall.dump()));
+    if (!entry) {
+      entry = createCacheEntry<T>({
+        key,
+        onTouch: (entry) => {
+          const expiredAt = entry.getExpiredAt();
+          if (expiredAt !== null) scheduleExpiry(key, expiredAt - Date.now());
+        },
       });
-    } else {
-      await sandbox(() => config?.onFresh!({ key, value: cachedCall.state.runs.current?.value, resolved: cachedCall.state.runs.current?.resolvedAt !== null, promise: cachedCall.state.runs.current?.promise! }));
+      cachedCalls.set(key, entry);
     }
 
-    let resolvedRun = cachedCall.getResolvedRun();
-
-    // If we don't get a direct hit to a resolved value, wait for one tick to see if the run just needs to resolve
-    // on next tick, in which case we'll just count it as a direct hit.
-    if (!resolvedRun) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      resolvedRun = cachedCall.getResolvedRun();
-    }
-
-    // If there is no resolved run, then there MUST be a current run in flight.
-    await sandbox(() => config?.onHit!(
-      resolvedRun ? {
-        key,
-        ...resolvedRun,
-      } : {
-        key,
-        value: undefined,
-        resolved: false,
-        promise: cachedCall.state.runs.current?.promise!,
-        stale: false,
-      },
-    ));
-
-    // Wait until after onHit call.
-    if (resolvedRun) return resolvedRun.value;
-
-    // If we're rushing, return null immediately, because if it was a direct hit, we would have already returned.
-    if (config.rush) return null;
-
-    // Only fall back on in-flight promise if we don't have a stale value and are not rushing
-    return await cachedCall.state.runs.current?.promise;
+    entry.patchConfig(config);
+    return entry;
   }
 
-  async function run<T>(key: KeyString, fn: () => Promise<T>, config: PiscachioConfig) {
-    const cachedCall = cachedCalls.get(key);
-    if (!cachedCall) throw new Error(`Cached call not found for key: ${key}`); // Should not be possible
-    const promise = new Promise(async (resolve, reject) => {
-      try {
-        const value = await fn();
-        const currentCachedCall = cachedCalls.get(key);
+  function startPendingRun<T>(
+    key: KeyString,
+    fn: () => Promise<T>,
+    config: PiscachioConfig<T>,
+    kind: PendingRun<T>['kind'],
+  ) {
+    const entry = cachedCalls.get(key) as CacheEntry<T> | undefined;
+    if (!entry) throw new Error(`Cached call not found for key: ${key}`);
 
-        // This is to account for the scenario where a current run was replaced with a `set` call
-        if (currentCachedCall?.state.runs.current?.promise !== promise) {
-          resolve(value);
-          return;
-        }
-        cachedCall.state.runs.current!.resolvedAt = Date.now();
-        cachedCall.state.runs.current!.value = value;
+    const version = entry.state.version + 1;
+    entry.state.version = version;
 
-        cachedCall.state.runs.stale = null;
-
-        resolve(value);
-        if (config?.onValue) await sandbox(() => config.onValue!({ key, value }));
-      } catch (error) {
-        if (config?.onRunError) await sandbox(() => config.onRunError!({ key, error }));
-        const currentCachedCall = cachedCalls.get(key);
-        // This is to account for the scenario where a current run was replaced with a `set` call
-        if (currentCachedCall?.state.runs.current?.promise !== promise) {
-          reject(error);
-          return;
-        }
-        reject(error);
-        clear(key);
-      }
+    let resolvePromise: (value: T) => void = () => undefined;
+    let rejectPromise: (error: unknown) => void = () => undefined;
+    const promise = new Promise<T>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
     });
 
-    cachedCall.state.runs.current = {
-      value: undefined as T,
-      ranAt: Date.now(),
-      resolvedAt: null,
+    entry.state.pending = {
       promise,
+      startedAt: Date.now(),
+      kind,
+      version,
+    };
+    if (kind === 'refresh') {
+      promise.catch(() => undefined);
     }
 
-    return cachedCall.state.runs.current!.promise;
+    void (async () => {
+      try {
+        const value = await fn();
+        const currentEntry = cachedCalls.get(key) as CacheEntry<T> | undefined;
+
+        if (currentEntry !== entry || currentEntry.state.pending?.version !== version) {
+          resolvePromise(value);
+          return;
+        }
+
+        currentEntry.state.committed = {
+          value,
+          committedAt: Date.now(),
+        };
+        currentEntry.state.pending = null;
+
+        resolvePromise(value);
+
+        if (config.onValue) await sandbox(() => config.onValue!({ key, value }));
+        if (kind === 'refresh' && config.onRefresh) {
+          await sandbox(() => config.onRefresh!({ key, value }));
+        }
+      } catch (error) {
+        if (config.onRunError) await sandbox(() => config.onRunError!({ key, error }));
+
+        const currentEntry = cachedCalls.get(key) as CacheEntry<T> | undefined;
+        if (currentEntry !== entry || currentEntry.state.pending?.version !== version) {
+          rejectPromise(error);
+          return;
+        }
+
+        currentEntry.state.pending = null;
+        rejectPromise(error);
+
+        if (!currentEntry.state.committed) clear(key);
+      }
+    })();
+
+    return entry.state.pending;
+  }
+
+  async function handle<T>(key: KeyString, fn: () => Promise<T>, config: PiscachioConfig<T>) {
+    const entry = prepareEntry<T>(key, config);
+
+    if (!entry.state.committed && !entry.state.pending) {
+      const pending = startPendingRun(key, fn, config, 'miss');
+      await sandbox(() => config.onMiss?.({ key }));
+      if (config.rush) {
+        pending.promise.catch(() => undefined);
+        return null;
+      }
+      return await pending.promise;
+    }
+
+    if (!entry.state.committed) {
+      const payload = entry.getPendingPayload();
+      if (!payload) throw new Error(`Expected in-flight run for key: ${key}`);
+      await sandbox(() => config.onHit?.(payload));
+      if (config.rush) return null;
+      return await payload.promise;
+    }
+
+    if (entry.isStale()) {
+      entry.state.pending ??= startPendingRun(key, fn, config, 'refresh');
+
+      const payload = entry.getStalePayload();
+      if (!payload) throw new Error(`Expected stale payload for key: ${key}`);
+
+      await sandbox(() => config.onStale?.(payload));
+      await sandbox(() => config.onHit?.(payload));
+      return payload.value;
+    }
+
+    const payload = entry.getFreshPayload();
+    if (!payload) throw new Error(`Expected fresh payload for key: ${key}`);
+
+    await sandbox(() => config.onFresh?.(payload));
+    await sandbox(() => config.onHit?.(payload));
+    return payload.value;
   }
 
   function set<T>(key: KeyString, value: T, config: PiscachioSetConfig) {
-    const cachedCall = patchCachedCall<T>(key, config);
-    cachedCall.state.runs.current = {
+    const entry = prepareEntry<T>(key, config);
+    const version = entry.state.version + 1;
+    entry.state.version = version;
+    entry.state.pending = null;
+    entry.state.committed = {
       value,
-      ranAt: Date.now(),
-      resolvedAt: Date.now(),
-      promise: Promise.resolve(value),
-    }
-    cachedCall.touch();
-    cachedCall.state.runs.stale = null;
-    if (config?.onValue) sandbox(() => config.onValue!({ key, value }));
+      committedAt: Date.now(),
+    };
+    entry.touch();
+    if (config.onValue) sandbox(() => config.onValue!({ key, value }));
   }
-
 
   const cache: PiscachioCache = {
     handle: handle as PiscachioCache['handle'],

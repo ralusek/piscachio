@@ -21,7 +21,7 @@ describe('lifecycle callbacks', () => {
       expect(onMiss).toHaveBeenCalledTimes(1);
 
       await piscachio(fn, { key: 'lifecycle-miss-no-hit', onMiss });
-      expect(onMiss).toHaveBeenCalledTimes(1); // Not called again
+      expect(onMiss).toHaveBeenCalledTimes(1);
     });
 
     it('should call onMiss when the cache entry has expired', async () => {
@@ -34,7 +34,7 @@ describe('lifecycle callbacks', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       await piscachio(fn, { key: 'lifecycle-miss-expired', onMiss });
-      expect(onMiss).toHaveBeenCalledTimes(2); // Called again after expiration
+      expect(onMiss).toHaveBeenCalledTimes(2);
     });
 
     it('should not call onMiss on a stale re-fetch', async () => {
@@ -44,7 +44,6 @@ describe('lifecycle callbacks', () => {
       await piscachio(fn, { key: 'lifecycle-miss-not-stale', staleIn: 0, onMiss });
       expect(onMiss).toHaveBeenCalledTimes(1);
 
-      // Second call triggers stale re-fetch — should NOT fire onMiss
       await piscachio(fn, { key: 'lifecycle-miss-not-stale', onMiss });
       expect(onMiss).toHaveBeenCalledTimes(1);
     });
@@ -75,11 +74,12 @@ describe('lifecycle callbacks', () => {
       const payload = onHit.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({
         key: 'lifecycle-hit',
+        state: 'fresh',
         value: 'value',
-        stale: false,
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: null,
+        expiresAt: null,
       }));
-      await expect(payload.promise).resolves.toBe('value');
     });
 
     it('should not call onHit on a cache miss', async () => {
@@ -97,17 +97,20 @@ describe('lifecycle callbacks', () => {
       await piscachio(fn, { key: 'lifecycle-hit-stale', staleIn: 0 });
 
       const result = await piscachio(fn, { key: 'lifecycle-hit-stale', onHit });
-      expect(onHit).toHaveBeenCalledTimes(1); // Stale hit is still a hit
+      expect(onHit).toHaveBeenCalledTimes(1);
       expect(result).toBe('first');
 
       const payload = onHit.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({
         key: 'lifecycle-hit-stale',
+        state: 'stale',
         value: 'first',
-        stale: true,
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: expect.any(Number),
+        expiresAt: null,
+        refreshStartedAt: expect.any(Number),
       }));
-      await expect(payload.promise).resolves.toBe('first');
+      await expect(payload.refreshPromise).resolves.toBe('second');
     });
 
     it('should swallow errors thrown by onHit', async () => {
@@ -123,7 +126,7 @@ describe('lifecycle callbacks', () => {
       expect(fn).toHaveBeenCalledTimes(1);
     });
 
-    it('should provide a resolved current payload on a fresh hit', async () => {
+    it('should provide a fresh payload on a fresh hit', async () => {
       const onHit = jest.fn();
       const fn = jest.fn().mockResolvedValue('value');
 
@@ -136,14 +139,15 @@ describe('lifecycle callbacks', () => {
       const payload = onHit.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({
         key: 'lifecycle-hit-current-payload',
+        state: 'fresh',
         value: 'value',
-        stale: false,
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: null,
+        expiresAt: null,
       }));
-      await expect(payload.promise).resolves.toBe('value');
     });
 
-    it('should provide a resolved stale payload on a stale hit', async () => {
+    it('should provide a stale payload on a stale hit', async () => {
       const onHit = jest.fn();
       const seedFn = jest.fn().mockResolvedValue('first');
       const refreshFn = jest.fn().mockImplementation(
@@ -160,16 +164,17 @@ describe('lifecycle callbacks', () => {
       const payload = onHit.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({
         key: 'lifecycle-hit-stale-payload',
+        state: 'stale',
         value: 'first',
-        stale: true,
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: expect.any(Number),
+        expiresAt: null,
+        refreshStartedAt: expect.any(Number),
       }));
-      await expect(payload.promise).resolves.toBe('first');
-
-      await new Promise((resolve) => setTimeout(resolve, 75));
+      await expect(payload.refreshPromise).resolves.toBe('second');
     });
 
-    it('should provide an in-flight current payload when a run is already in flight', async () => {
+    it('should provide a pending payload when a run is already in flight', async () => {
       const onHit = jest.fn();
       const fn = jest.fn().mockImplementation(
         () => new Promise(resolve => setTimeout(() => resolve('value'), 50))
@@ -186,11 +191,44 @@ describe('lifecycle callbacks', () => {
       const payload = onHit.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({
         key: 'lifecycle-hit-in-flight-payload',
-        value: undefined,
-        stale: false,
-        resolved: false,
+        state: 'pending',
+        startedAt: expect.any(Number),
+        expiresAt: null,
       }));
       await expect(payload.promise).resolves.toBe('value');
+    });
+
+    it('should keep returning the stale payload while a refresh is already in flight', async () => {
+      const onHit = jest.fn();
+      const seedFn = jest.fn().mockResolvedValue('first');
+      let resolveRefresh!: (value: string) => void;
+      const refreshFn = jest.fn().mockImplementation(
+        () => new Promise<string>((resolve) => {
+          resolveRefresh = resolve;
+        })
+      );
+
+      await piscachio(seedFn, { key: 'lifecycle-hit-stale-repeat', staleIn: 0 });
+
+      const firstResult = await piscachio(refreshFn, { key: 'lifecycle-hit-stale-repeat', onHit });
+      const secondResult = await piscachio(refreshFn, { key: 'lifecycle-hit-stale-repeat', onHit });
+
+      expect(firstResult).toBe('first');
+      expect(secondResult).toBe('first');
+      expect(refreshFn).toHaveBeenCalledTimes(1);
+      expect(onHit).toHaveBeenCalledTimes(2);
+
+      const firstPayload = onHit.mock.calls[0][0];
+      const secondPayload = onHit.mock.calls[1][0];
+
+      expect(firstPayload.state).toBe('stale');
+      expect(secondPayload.state).toBe('stale');
+      expect(firstPayload.value).toBe('first');
+      expect(secondPayload.value).toBe('first');
+      expect(firstPayload.refreshPromise).toBe(secondPayload.refreshPromise);
+
+      resolveRefresh('second');
+      await expect(firstPayload.refreshPromise).resolves.toBe('second');
     });
   });
 
@@ -208,10 +246,14 @@ describe('lifecycle callbacks', () => {
       const payload = onStale.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({
         key: 'lifecycle-stale',
+        state: 'stale',
         value: 'first',
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: expect.any(Number),
+        expiresAt: null,
+        refreshStartedAt: expect.any(Number),
       }));
-      await expect(payload.promise).resolves.toBe('first');
+      await expect(payload.refreshPromise).resolves.toBe('second');
     });
 
     it('should not call onStale when the cached entry is fresh', async () => {
@@ -262,10 +304,12 @@ describe('lifecycle callbacks', () => {
       const payload = onFresh.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({
         key: 'lifecycle-fresh',
+        state: 'fresh',
         value: 'value',
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: null,
+        expiresAt: null,
       }));
-      await expect(payload.promise).resolves.toBe('value');
     });
 
     it('should not call onFresh when the cached entry is stale', async () => {
@@ -309,14 +353,12 @@ describe('lifecycle callbacks', () => {
       const callbacks = { onMiss, onHit, onStale, onFresh };
       const fn = jest.fn().mockResolvedValue('value');
 
-      // First call — miss
       await piscachio(fn, { key: 'lifecycle-combined', ...callbacks });
       expect(onMiss).toHaveBeenCalledTimes(1);
       expect(onHit).toHaveBeenCalledTimes(0);
       expect(onStale).toHaveBeenCalledTimes(0);
       expect(onFresh).toHaveBeenCalledTimes(0);
 
-      // Second call — fresh hit
       await piscachio(fn, { key: 'lifecycle-combined', ...callbacks });
       expect(onMiss).toHaveBeenCalledTimes(1);
       expect(onHit).toHaveBeenCalledTimes(1);
@@ -326,17 +368,20 @@ describe('lifecycle callbacks', () => {
       expect(onMiss.mock.calls[0][0]).toEqual({ key: 'lifecycle-combined' });
       expect(onHit.mock.calls[0][0]).toEqual(expect.objectContaining({
         key: 'lifecycle-combined',
+        state: 'fresh',
         value: 'value',
-        stale: false,
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: null,
+        expiresAt: null,
       }));
-      await expect(onHit.mock.calls[0][0].promise).resolves.toBe('value');
       expect(onFresh.mock.calls[0][0]).toEqual(expect.objectContaining({
         key: 'lifecycle-combined',
+        state: 'fresh',
         value: 'value',
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: null,
+        expiresAt: null,
       }));
-      await expect(onFresh.mock.calls[0][0].promise).resolves.toBe('value');
     });
 
     it('should call onHit + onStale (not onFresh or onMiss) on a stale hit', async () => {
@@ -347,13 +392,11 @@ describe('lifecycle callbacks', () => {
       const callbacks = { onMiss, onHit, onStale, onFresh };
       const fn = jest.fn().mockResolvedValueOnce('first').mockResolvedValueOnce('second');
 
-      // First call — miss
       await piscachio(fn, { key: 'lifecycle-combined-stale', staleIn: 0, ...callbacks });
       expect(onMiss).toHaveBeenCalledTimes(1);
 
-      // Second call — stale hit
       await piscachio(fn, { key: 'lifecycle-combined-stale', ...callbacks });
-      expect(onMiss).toHaveBeenCalledTimes(1); // Not called again
+      expect(onMiss).toHaveBeenCalledTimes(1);
       expect(onHit).toHaveBeenCalledTimes(1);
       expect(onStale).toHaveBeenCalledTimes(1);
       expect(onFresh).toHaveBeenCalledTimes(0);
@@ -361,17 +404,24 @@ describe('lifecycle callbacks', () => {
       expect(onMiss.mock.calls[0][0]).toEqual({ key: 'lifecycle-combined-stale' });
       expect(onHit.mock.calls[0][0]).toEqual(expect.objectContaining({
         key: 'lifecycle-combined-stale',
+        state: 'stale',
         value: 'first',
-        stale: true,
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: expect.any(Number),
+        expiresAt: null,
+        refreshStartedAt: expect.any(Number),
       }));
-      await expect(onHit.mock.calls[0][0].promise).resolves.toBe('first');
+      await expect(onHit.mock.calls[0][0].refreshPromise).resolves.toBe('second');
       expect(onStale.mock.calls[0][0]).toEqual(expect.objectContaining({
         key: 'lifecycle-combined-stale',
+        state: 'stale',
         value: 'first',
-        resolved: true,
+        committedAt: expect.any(Number),
+        staleAt: expect.any(Number),
+        expiresAt: null,
+        refreshStartedAt: expect.any(Number),
       }));
-      await expect(onStale.mock.calls[0][0].promise).resolves.toBe('first');
+      await expect(onStale.mock.calls[0][0].refreshPromise).resolves.toBe('second');
     });
 
     it('should call onMiss again after expiration', async () => {

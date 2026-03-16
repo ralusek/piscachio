@@ -1,11 +1,43 @@
-export type PiscachioConfig<T extends any = any> = {
+export type PiscachioPendingPayload<T = any> = {
+  key: string;
+  state: 'pending';
+  startedAt: number;
+  expiresAt: number | null;
+  promise: Promise<T>;
+};
+
+export type PiscachioFreshPayload<T = any> = {
+  key: string;
+  state: 'fresh';
+  value: T;
+  committedAt: number;
+  staleAt: number | null;
+  expiresAt: number | null;
+};
+
+export type PiscachioStalePayload<T = any> = {
+  key: string;
+  state: 'stale';
+  value: T;
+  committedAt: number;
+  staleAt: number | null;
+  expiresAt: number | null;
+  refreshPromise: Promise<T>;
+  refreshStartedAt: number;
+};
+
+export type PiscachioHitPayload<T = any> =
+  | PiscachioPendingPayload<T>
+  | PiscachioFreshPayload<T>
+  | PiscachioStalePayload<T>;
+
+export type PiscachioConfig<T = any> = {
   key: string | string[];
   expireIn?: number;
   staleIn?: number;
 
   // Does not affect cache behavior, but if true, indicates that the function should return immediately.
-  // If there is a pending run, it will not be awaited. If the promise is already resolved, it will be
-  // returned.
+  // If there is a pending run, it will not be awaited. If a committed value exists, it will be returned.
   rush?: boolean;
 
   // Lifecycle callbacks
@@ -13,34 +45,20 @@ export type PiscachioConfig<T extends any = any> = {
   // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
   // If caller wishes it to be purely observational, simply do not await your logic within the callback.
   onMiss?: (payload: { key: string }) => void | Promise<void>;
-  // Called when the cache has an entry for the key (hit).
+  // Called when the cache has an entry for the key (hit). Payload is a derived read view.
   // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
   // If caller wishes it to be purely observational, simply do not await your logic within the callback.
-  onHit?: (payload: { key: string; value: T; stale: boolean; resolved: boolean; promise: Promise<T> }) => void | Promise<void>;
+  onHit?: (payload: PiscachioHitPayload<T>) => void | Promise<void>;
 
-  onStale?: (payload: {
-    key: string;
-    // Stale value. Undefined if in flight.
-    value: T | undefined;
-    // Whether the stale value has been resolved. In current architecture, this is always true.
-    resolved: boolean;
-    promise: Promise<T>;
-  }) => void | Promise<void>;
+  onStale?: (payload: PiscachioStalePayload<T>) => void | Promise<void>;
 
-  onFresh?: (payload: {
-    key: string;
-    // Current value. Undefined if in flight
-    value: T | undefined;
-    // Whether the current value has been resolved.
-    resolved: boolean;
-    promise: Promise<T>;
-  }) => void | Promise<void>;
+  onFresh?: (payload: PiscachioFreshPayload<T>) => void | Promise<void>;
 
   // Called when a value is set in the cache.
-  onValue?: (payload: { key: string, value: T }) => void | Promise<void>;
+  onValue?: (payload: { key: string; value: T }) => void | Promise<void>;
 
-  // Called when a value is set on the cache due to staleness
-  onRefresh?: (payload: { key: string; value: T; }) => void | Promise<void>;
+  // Called when a value is set on the cache due to staleness.
+  onRefresh?: (payload: { key: string; value: T }) => void | Promise<void>;
 
   // Called when the function run errors. In most cases, these errors will be thrown to the caller, but
   // on stale hits, we run the function again in the background and catch the errors. Thus, to not lose
@@ -49,8 +67,6 @@ export type PiscachioConfig<T extends any = any> = {
 };
 
 export type PiscachioSetConfig = Omit<PiscachioConfig, 'rush' | 'onMiss' | 'onHit' | 'onStale' | 'onFresh'>;
-
-
 
 export type PiscachioCache = {
   handle: {
