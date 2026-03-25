@@ -25,6 +25,7 @@ export function isolate(): PiscachioInstance {
     fn: () => Promise<T>,
     config: PiscachioConfig,
   ) {
+    validateConfig(config);
     const keyAsString = getKeyAsString(config.key);
 
     const value = await cache.handle(keyAsString, fn, config);
@@ -36,6 +37,7 @@ export function isolate(): PiscachioInstance {
     value: T,
     config: PiscachioSetConfig,
   ): T {
+    validateConfig(config);
     const keyAsString = getKeyAsString(config.key);
     cache.set(keyAsString, value, config);
     return value;
@@ -64,4 +66,12 @@ function getKeyAsString(key: string | string[]): KeyString {
     if (key.includes('::')) throw new Error(`Piscachio key ${key} may not contain the "::" character.`);
   });
   return key.join('::');
+}
+
+function validateConfig(config: Pick<PiscachioConfig, 'expireIn'>): void {
+  if (config.expireIn === undefined) return;
+  if (config.expireIn === Infinity) return;
+  if (!Number.isFinite(config.expireIn) || config.expireIn < 0) {
+    throw new Error('Piscachio expireIn must be a non-negative finite number or Infinity.');
+  }
 }

@@ -175,6 +175,14 @@ export default function createCache() {
   function scheduleExpiry(key: KeyString, expireIn: number) {
     const timeout = timeouts.get(key);
     if (timeout) clearTimeout(timeout);
+
+    // Infinity means "never expire" — skip the timer to avoid
+    // TimeoutOverflowWarning (Infinity doesn't fit a 32-bit signed int).
+    if (expireIn === Infinity) {
+      timeouts.delete(key);
+      return;
+    }
+
     const newTimeout = setTimeout(() => {
       expireValue(key);
     }, Math.max(0, expireIn));

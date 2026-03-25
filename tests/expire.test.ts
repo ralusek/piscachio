@@ -169,6 +169,26 @@ describe('expire functionality', () => {
     expire('expire-pending-commit');
   });
 
+  it('should never expire when expireIn is Infinity', async () => {
+    const fn = jest
+      .fn()
+      .mockResolvedValueOnce('cached')
+      .mockResolvedValueOnce('should-not-appear');
+
+    // Populate with expireIn: Infinity — should not trigger TimeoutOverflowWarning
+    const result1 = await piscachio(fn, { key: 'expire-infinity', expireIn: Infinity });
+    expect(result1).toBe('cached');
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    // Wait a bit and verify the value is still cached
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const result2 = await piscachio(fn, { key: 'expire-infinity', expireIn: Infinity });
+    expect(result2).toBe('cached');
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    expire('expire-infinity');
+  });
+
   it('should reuse an in-flight refresh after the committed value expires', async () => {
     let resolveRefresh!: (value: string) => void;
     const seedFn = jest.fn().mockResolvedValue('first');
