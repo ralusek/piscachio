@@ -87,7 +87,7 @@ describe('expire functionality', () => {
 
     await piscachio(fn, { key: 'expire-onMiss', onMiss });
     expect(onMiss).toHaveBeenCalledTimes(1);
-    expect(onMiss).toHaveBeenCalledWith({ key: 'expire-onMiss' });
+    expect(onMiss).toHaveBeenCalledWith({ key: 'expire-onMiss' }, { forced: false });
   });
 
   it('should clear scheduled expiry timers', async () => {

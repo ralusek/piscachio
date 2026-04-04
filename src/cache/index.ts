@@ -315,17 +315,30 @@ export default function createCache() {
     return entry.state.pending;
   }
 
+  async function handleMiss<T>(
+    key: KeyString,
+    fn: () => Promise<T>,
+    config: PiscachioConfig<T>,
+    forced: boolean,
+  ) {
+    const pending = startPendingRun(key, fn, config, 'miss');
+    await sandbox(() => config.onMiss?.({ key }, { forced }));
+    if (config.rush) {
+      pending.promise.catch(() => undefined);
+      return null;
+    }
+    return await pending.promise;
+  }
+
   async function handle<T>(key: KeyString, fn: () => Promise<T>, config: PiscachioConfig<T>) {
     const entry = prepareEntry<T>(key, config);
 
+    if (config.forceMiss) {
+      return await handleMiss(key, fn, config, true);
+    }
+
     if (!entry.state.committed && !entry.state.pending) {
-      const pending = startPendingRun(key, fn, config, 'miss');
-      await sandbox(() => config.onMiss?.({ key }));
-      if (config.rush) {
-        pending.promise.catch(() => undefined);
-        return null;
-      }
-      return await pending.promise;
+      return await handleMiss(key, fn, config, false);
     }
 
     if (!entry.state.committed) {

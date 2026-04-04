@@ -9,7 +9,8 @@ describe('lifecycle callbacks', () => {
       await piscachio(fn, { key: 'lifecycle-miss', onMiss });
       expect(onMiss).toHaveBeenCalledTimes(1);
       expect(onMiss).toHaveBeenCalledWith(
-        expect.objectContaining({ key: 'lifecycle-miss' })
+        expect.objectContaining({ key: 'lifecycle-miss' }),
+        { forced: false },
       );
     });
 

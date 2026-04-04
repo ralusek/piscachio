@@ -35,10 +35,19 @@ export type PiscachioHitPayload<T = any> =
   | PiscachioFreshPayload<T>
   | PiscachioStalePayload<T>;
 
+export type PiscachioMissPayload = {
+  key: string;
+};
+
+export type PiscachioMissMeta = {
+  forced: boolean;
+};
+
 export type PiscachioConfig<T = any> = {
   key: string | string[];
   expireIn?: number;
   staleIn?: number;
+  forceMiss?: boolean;
 
   // Does not affect cache behavior, but if true, indicates that the function should return immediately.
   // If there is a pending run, it will not be awaited. If a committed value exists, it will be returned.
@@ -46,9 +55,10 @@ export type PiscachioConfig<T = any> = {
 
   // Lifecycle callbacks
   // Called when the cache does not have an entry for the key and a new run is initiated.
+  // The second parameter indicates whether this miss was forced by `forceMiss`.
   // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
   // If caller wishes it to be purely observational, simply do not await your logic within the callback.
-  onMiss?: (payload: { key: string }) => void | Promise<void>;
+  onMiss?: (payload: PiscachioMissPayload, meta: PiscachioMissMeta) => void | Promise<void>;
   // Called when the cache has an entry for the key (hit). Payload is a derived read view.
   // This is a sandboxed control-flow callback. It will be awaited, but any errors will be ignored.
   // If caller wishes it to be purely observational, simply do not await your logic within the callback.
@@ -70,7 +80,7 @@ export type PiscachioConfig<T = any> = {
   onRunError?: (payload: { key: string; error: unknown }) => void | Promise<void>;
 };
 
-export type PiscachioSetConfig = Omit<PiscachioConfig, 'rush' | 'onMiss' | 'onHit' | 'onStale' | 'onFresh'>;
+export type PiscachioSetConfig = Omit<PiscachioConfig, 'forceMiss' | 'rush' | 'onMiss' | 'onHit' | 'onStale' | 'onFresh'>;
 
 export type PiscachioCache = {
   handle: {
