@@ -314,6 +314,8 @@ After 30 seconds the cached article is still returned, but the next read trigger
 
 Setting `staleIn: 0` is a useful pattern when you want "return cached once, then refresh on the next read".
 
+If later reads pass another `staleIn`, the cache compares the new deadline (`committedAt + staleIn`) against the current stale deadline for the currently committed value. While the entry is still fresh, a later deadline is ignored and an earlier one wins. Once the current deadline has already passed, the next read still behaves as stale and triggers a refresh, but it may also establish the stale policy that applies after that refresh commits.
+
 ### Low-latency reads with `rush`
 
 ```ts
@@ -474,8 +476,12 @@ const count = await privatePiscachio(async () => 5, { key: 'count' });
 
 ### `staleIn` vs `expireIn`
 
-- `staleIn` is based on when the current committed value was written
-- if later calls pass a new `staleIn`, staleness is recalculated from that current committed timestamp
+- `staleIn` will always override the existing stale policy for a key, but only actually results in a
+- new stale deadline if it is sooner than the current deadline.
+- while an entry is still fresh, later calls do not extend the current stale deadline
+- if a later call passes a `staleIn` whose new deadline (`committedAt + staleIn`) is sooner than the current stale deadline, that earlier deadline wins
+- once the current stale deadline has already passed, the next call still takes the stale path, but it may replace the stale policy used after that refresh commits
+- once an earlier deadline wins, that `staleIn` becomes the policy used for the next committed value
 - `expireIn` starts once a value has been committed
 - `expireIn` behaves like time-to-idle after commit: reads and writes push the deadline back
 - the deadline is calculated from the later of the current committed time and the most recent access or write

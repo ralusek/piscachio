@@ -1,4 +1,4 @@
-import piscachio, { expire } from '../dist';
+import piscachio, { expire, forceStale } from '../dist';
 
 describe('forceMiss functionality', () => {
   afterEach(() => {
@@ -149,11 +149,13 @@ describe('forceMiss functionality', () => {
     );
     const forcedFn = jest.fn().mockResolvedValue('forced');
 
-    await piscachio(seedFn, { key: 'force-miss-stale-refresh', staleIn: 0 });
+    await piscachio(seedFn, { key: 'force-miss-stale-refresh', staleIn: 1000 });
+
+    forceStale('force-miss-stale-refresh');
 
     const staleResult = await piscachio(refreshFn, {
       key: 'force-miss-stale-refresh',
-      staleIn: 0,
+      staleIn: 1000,
     });
 
     expect(staleResult).toBe('first');

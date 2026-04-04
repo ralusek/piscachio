@@ -46,6 +46,11 @@ export type PiscachioMissMeta = {
 export type PiscachioConfig<T = any> = {
   key: string | string[];
   expireIn?: number;
+  /**
+   * Milliseconds until a committed value is considered stale.
+   * Always overrides the current stale policy for a key, but only actually results in a
+   * new stale deadline if it is sooner than the current deadline.
+   * */
   staleIn?: number;
   forceMiss?: boolean;
 

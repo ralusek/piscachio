@@ -31,6 +31,7 @@ type PendingRun<T> = {
 type State<T> = {
   key: KeyString;
   staleIn?: number;
+  staleAt: number | null;
   expireIn?: number;
   forceStale: boolean;
   touchedAt: number | null;
@@ -50,6 +51,7 @@ function createCacheEntry<T>(
     key: config.key,
     touchedAt: null,
     staleIn: undefined,
+    staleAt: null,
     expireIn: undefined,
     forceStale: false,
     version: 0,
@@ -58,9 +60,8 @@ function createCacheEntry<T>(
   };
 
   function getStaleAt(now?: number) {
-    if (state.staleIn === undefined) return null;
-    if (!state.committed) return null;
-    const staleAt = state.committed.committedAt + state.staleIn;
+    if (!state.committed || state.staleAt === null) return null;
+    const staleAt = state.staleAt;
     if (!state.forceStale) return staleAt;
     now ??= Date.now();
     return Math.min(staleAt, now);
@@ -99,7 +100,26 @@ function createCacheEntry<T>(
 
   function patchConfig(config: PiscachioConfig) {
     if (config.expireIn !== undefined) state.expireIn = Math.max(state.expireIn ?? 0, config.expireIn);
-    if (config.staleIn !== undefined) state.staleIn = config.staleIn;
+    if (config.staleIn !== undefined) {
+      
+      // Always keep the latest stale policy. If it does not tighten the current
+      // committed value's deadline, it will still be used on the next commit.
+      state.staleIn = config.staleIn;
+
+      // Without a committed value, `staleAt` is meaningless and will be recomputed
+      // when the first value is committed.
+      if (state.committed) {
+        // Calculate the new stale deadline.
+        const staleAt = state.committed.committedAt + config.staleIn;
+
+        // Only allow staleAt to be updated if the new deadline is sooner than the current deadline.
+        // Note: staleAt is also updated after every commit, which prevents the scenario where a
+        // stale deadline is never moved forward due to all new future deadlines failing to be sooner.
+        if (state.staleAt === null || staleAt < state.staleAt) {
+          state.staleAt = staleAt;
+        }
+      }
+    }
     touch();
   }
 
@@ -214,6 +234,7 @@ export default function createCache() {
 
     if (entry.state.pending) {
       entry.state.committed = null;
+      entry.state.staleAt = null;
       entry.state.forceStale = false;
       syncExpiry(key, entry);
       return;
@@ -239,8 +260,9 @@ export default function createCache() {
       cachedCalls.set(key, entry);
     }
 
+    const wasStale = entry.isStale();
     entry.patchConfig(config);
-    return entry;
+    return { entry, wasStale };
   }
 
   function startPendingRun<T>(
@@ -286,6 +308,9 @@ export default function createCache() {
           value,
           committedAt: Date.now(),
         };
+        currentEntry.state.staleAt = currentEntry.state.staleIn === undefined
+          ? null
+          : currentEntry.state.committed.committedAt + currentEntry.state.staleIn;
         currentEntry.state.forceStale = false;
         currentEntry.state.pending = null;
         syncExpiry(key, currentEntry);
@@ -331,7 +356,7 @@ export default function createCache() {
   }
 
   async function handle<T>(key: KeyString, fn: () => Promise<T>, config: PiscachioConfig<T>) {
-    const entry = prepareEntry<T>(key, config);
+    const { entry, wasStale } = prepareEntry<T>(key, config);
 
     if (config.forceMiss) {
       return await handleMiss(key, fn, config, true);
@@ -349,7 +374,11 @@ export default function createCache() {
       return await payload.promise;
     }
 
-    if (entry.isStale()) {
+    // `wasStale` preserves the pre-patch stale state so a caller cannot skip a refresh by
+    // extending staleness after the old deadline already passed. We re-check `entry.isStale()`
+    // because this call's config may have tightened the policy on a previously fresh entry
+    // (for example by passing a smaller `staleIn`, including `0`).
+    if (wasStale || entry.isStale()) {
       entry.state.pending ??= startPendingRun(key, fn, config, 'refresh');
 
       const payload = entry.getStalePayload();
@@ -369,7 +398,7 @@ export default function createCache() {
   }
 
   function set<T>(key: KeyString, value: T, config: PiscachioSetConfig) {
-    const entry = prepareEntry<T>(key, config);
+    const { entry } = prepareEntry<T>(key, config);
     const version = entry.state.version + 1;
     entry.state.version = version;
     entry.state.pending = null;
@@ -377,6 +406,9 @@ export default function createCache() {
       value,
       committedAt: Date.now(),
     };
+    entry.state.staleAt = entry.state.staleIn === undefined
+      ? null
+      : entry.state.committed.committedAt + entry.state.staleIn;
     entry.state.forceStale = false;
     entry.touch();
     if (config.onValue) sandbox(() => config.onValue!({ key, value }));

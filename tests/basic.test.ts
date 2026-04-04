@@ -72,47 +72,47 @@ describe('basic piscachio functionality', () => {
       .mockResolvedValueOnce('firstTest')
       .mockResolvedValueOnce('secondTest')
       .mockResolvedValueOnce('thirdTest')
-      .mockResolvedValueOnce('fourthTest')
-      .mockResolvedValueOnce('fifthTest');
-  
-    // First invocation
-    const result1 = await piscachio(fn, { key: 'testKeyStale', staleIn: 0 });
+      .mockResolvedValueOnce('fourthTest');
+
+    // First invocation establishes a stale deadline 200ms in the future.
+    const result1 = await piscachio(fn, { key: 'testKeyStale', staleIn: 200 });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result1).toBe('firstTest');
-  
-    // Second invocation: the function is rerun due to staleness but it still returns the stale value
-    const result2 = await piscachio(fn, { key: 'testKeyStale' });
-    expect(fn).toHaveBeenCalledTimes(2); // Allowed for async execution
-    expect(result2).toBe('firstTest'); // Should still have returned the first value
-  
-    // Third invocation: the function should now return the updated value
-    const result3 = await piscachio(fn, { key: 'testKeyStale', staleIn: 0 });
-    expect(fn).toHaveBeenCalledTimes(3); 
-    expect(result3).toBe('secondTest'); // Should return the second value now
 
-    // Fourth invocation: the function should now return the updated value
-    const result4 = await piscachio(fn, { key: 'testKeyStale', staleIn: 150 });
-    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3 despite us just now firing off new one because we haven't waited next tick
-    await new Promise((resolve) => setTimeout(() => resolve(null), 50)); // Allow for async execution, but stay within staleIn value
-    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3 because we've updated the staleIn value to a greater value
-    expect(result4).toBe('thirdTest'); // Should return the second value now
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
-    // Drop to a lower staleIn value
-    const result5 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
-    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3
-    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
-    expect(fn).toHaveBeenCalledTimes(3); // Will still be 3, because even though we've lowered the staleIn value, we're still not 100ms past the createdAt value
-    expect(result5).toBe('thirdTest'); // Should return the third value now
+    // This tightens the stale deadline from committedAt + 200ms to committedAt + 100ms.
+    const result2 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(result2).toBe('firstTest');
 
-    await new Promise((resolve) => setTimeout(() => resolve(null), 200)); //  Wait past staleIn value
-    const result6 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
-    expect(fn).toHaveBeenCalledTimes(4); // Now reflects fact that we had exceeded createdAt + staleIn value
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The refreshed value is still fresh under the current 100ms deadline. Passing 1000 here
+    // updates the next-commit policy, but does not relax the current committed value's deadline.
+    const result3 = await piscachio(fn, { key: 'testKeyStale', staleIn: 1000 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(result3).toBe('secondTest');
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    // Once the stale deadline has passed, a new staleIn can replace it, but this read is still stale.
+    const result4 = await piscachio(fn, { key: 'testKeyStale' });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(result4).toBe('secondTest');
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The refreshed value should now be fresh under the new 1000ms policy.
+    const result5 = await piscachio(fn, { key: 'testKeyStale', staleIn: 40 });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(result5).toBe('thirdTest');
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    // The earlier deadline has now passed, so we return stale and trigger a refresh.
+    const result6 = await piscachio(fn, { key: 'testKeyStale' });
+    expect(fn).toHaveBeenCalledTimes(4);
     expect(result6).toBe('thirdTest');
-
-    const result7 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
-    expect(result7).toBe('fourthTest');
-    await new Promise((resolve) => setTimeout(() => resolve(null), 0)); // Allow for async execution
-    const result8 = await piscachio(fn, { key: 'testKeyStale', staleIn: 100 });
-    expect(result8).toBe('fourthTest');
   });
 });
