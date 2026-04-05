@@ -1,5 +1,5 @@
 // Types
-import { KeyString, PiscachioConfig, PiscachioInstance, PiscachioSetConfig } from './types';
+import { KeyString, PiscachioConfig, PiscachioInstance, PiscachioPeekPayload, PiscachioSetConfig } from './types';
 
 import createCache from './cache';
 
@@ -7,6 +7,7 @@ const globalPiscachio = isolate();
 
 export default globalPiscachio;
 export const set = globalPiscachio.set;
+export const peek = globalPiscachio.peek;
 export const forceStale = globalPiscachio.forceStale;
 export const expire = globalPiscachio.expire;
 
@@ -43,6 +44,10 @@ export function isolate(): PiscachioInstance {
     return value;
   }
 
+  function peek<T>(key: string | string[]): PiscachioPeekPayload<T> {
+    return cache.peek(getKeyAsString(key));
+  }
+
   function forceStale(key: string | string[]): void {
     cache.forceStale(getKeyAsString(key));
   }
@@ -53,6 +58,7 @@ export function isolate(): PiscachioInstance {
 
   const instance = piscachio as PiscachioInstance;
   instance.set = set;
+  instance.peek = peek;
   instance.forceStale = forceStale;
   instance.expire = expire;
 

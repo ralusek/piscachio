@@ -4,6 +4,7 @@ import {
   PiscachioConfig,
   PiscachioFreshPayload,
   PiscachioPendingPayload,
+  PiscachioPeekPayload,
   PiscachioSetConfig,
   PiscachioStalePayload,
 } from '../types';
@@ -414,6 +415,38 @@ export default function createCache() {
     if (config.onValue) sandbox(() => config.onValue!({ key, value }));
   }
 
+  function peek<T>(key: KeyString): PiscachioPeekPayload<T> {
+    let entry = cachedCalls.get(key) as CacheEntry<T> | undefined;
+    if (entry?.isExpired()) {
+      expireValue(key);
+      entry = cachedCalls.get(key) as CacheEntry<T> | undefined;
+    }
+
+    if (!entry?.state.committed) {
+      return {
+        key,
+        missed: true,
+        value: null,
+        state: 'missing',
+        pending: Boolean(entry?.state.pending),
+        committedAt: null,
+        staleAt: null,
+        expiresAt: null,
+      };
+    }
+
+    return {
+      key,
+      missed: false,
+      value: entry.state.committed.value,
+      state: entry.isStale() ? 'stale' : 'fresh',
+      pending: Boolean(entry.state.pending),
+      committedAt: entry.state.committed.committedAt,
+      staleAt: entry.getStaleAt(),
+      expiresAt: entry.getExpiredAt(),
+    };
+  }
+
   function forceStale(key: KeyString) {
     const entry = cachedCalls.get(key) as CacheEntry<any> | undefined;
     if (!entry || !entry.state.committed) return;
@@ -427,6 +460,7 @@ export default function createCache() {
   const cache: PiscachioCache = {
     handle: handle as PiscachioCache['handle'],
     set,
+    peek,
     forceStale,
     expire,
   };

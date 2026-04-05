@@ -35,6 +35,35 @@ export type PiscachioHitPayload<T = any> =
   | PiscachioFreshPayload<T>
   | PiscachioStalePayload<T>;
 
+/** Returned by `peek` when no committed value currently exists. */
+export type PiscachioPeekMiss = {
+  key: string;
+  missed: true;
+  value: null;
+  state: 'missing';
+  pending: boolean;
+  committedAt: null;
+  staleAt: null;
+  expiresAt: null;
+};
+
+/** Returned by `peek` when a committed value exists. */
+export type PiscachioPeekHit<T = any> = {
+  key: string;
+  missed: false;
+  value: T;
+  state: 'fresh' | 'stale';
+  pending: boolean;
+  committedAt: number;
+  staleAt: number | null;
+  expiresAt: number | null;
+};
+
+/** Read-only snapshot returned by `peek`. */
+export type PiscachioPeekPayload<T = any> =
+  | PiscachioPeekMiss
+  | PiscachioPeekHit<T>;
+
 export type PiscachioMissPayload = {
   key: string;
 };
@@ -93,6 +122,7 @@ export type PiscachioCache = {
     <T>(key: string, fn: () => T | Promise<T>, config: PiscachioConfig): Promise<T>;
   };
   set: <T>(key: string, value: T, config: PiscachioSetConfig) => void;
+  peek: <T>(key: string) => PiscachioPeekPayload<T>;
   /** Marks the committed value stale without discarding it. */
   forceStale: (key: string) => void;
   /** Removes all cached state for the key immediately. */
@@ -112,6 +142,8 @@ export type PiscachioInstance = {
   ): Promise<T>;
   /** Writes a resolved value directly into this cache instance. */
   set: <T>(value: T, config: PiscachioSetConfig) => T;
+  /** Reads the current committed value without touching cache state. */
+  peek: <T>(key: string | string[]) => PiscachioPeekPayload<T>;
   /** Marks the current committed value stale without removing it. */
   forceStale: (key: string | string[]) => void;
   /** Removes the entry so the next read behaves like a miss. */

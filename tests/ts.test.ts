@@ -1,4 +1,4 @@
-import piscachio, { isolate } from '../dist';
+import piscachio, { isolate, peek } from '../dist';
 
 describe('basic piscachio functionality', () => {
   it('should not throw a typescript error for return type', async () => {
@@ -22,6 +22,23 @@ describe('basic piscachio functionality', () => {
       }, { key: ['testKey', 'isolated'] });
 
       const z: number = y;
+    }
+  });
+
+  it('should not throw a typescript error for peek results', () => {
+    const result = peek<number>(['testKey', 'peek']);
+
+    if (!result.missed) {
+      const z: number = result.value;
+    }
+  });
+
+  it('should not throw a typescript error for isolated peek results', () => {
+    const isolated = isolate();
+    const result = isolated.peek<number>(['testKey', 'isolated-peek']);
+
+    if (!result.missed) {
+      const z: number = result.value;
     }
   });
 });

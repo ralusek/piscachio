@@ -177,6 +177,57 @@ In practice, `set(...)` uses:
 - `expireIn`
 - `onValue`
 
+### `peek(key)`
+
+```ts
+import { peek } from 'piscachio';
+
+const snapshot = peek('feature-flags');
+```
+
+Reads the current committed value without triggering refreshes, callbacks, or TTL updates.
+
+#### Signature
+
+```ts
+function peek<T>(
+  key: string | string[]
+): PiscachioPeekPayload<T>;
+```
+
+`PiscachioPeekPayload<T>` is a discriminated union:
+
+```ts
+type PiscachioPeekPayload<T> =
+  | {
+      key: string;
+      missed: true;
+      value: null;
+      state: 'missing';
+      pending: boolean;
+      committedAt: null;
+      staleAt: null;
+      expiresAt: null;
+    }
+  | {
+      key: string;
+      missed: false;
+      value: T;
+      state: 'fresh' | 'stale';
+      pending: boolean;
+      committedAt: number;
+      staleAt: number | null;
+      expiresAt: number | null;
+    };
+```
+
+Notes:
+
+- `pending: true` with `missed: true` means work is currently in flight but nothing has committed yet
+- `pending: true` with `state: 'stale'` means a background refresh is already running
+- expired entries are treated as missing
+- the named helper operates on the shared top-level cache; isolated instances expose `instance.peek(...)`
+
 ### `forceStale(key)`
 
 ```ts
@@ -233,7 +284,7 @@ import { isolate } from 'piscachio';
 const privateCache = isolate();
 ```
 
-Creates a new private in-memory cache context. The default export and named helpers keep using the shared top-level context, while each isolated instance gets its own cache and its own `instance.set(...)`, `instance.forceStale(...)`, and `instance.expire(...)`.
+Creates a new private in-memory cache context. The default export and named helpers keep using the shared top-level context, while each isolated instance gets its own cache and its own `instance.set(...)`, `instance.peek(...)`, `instance.forceStale(...)`, and `instance.expire(...)`.
 
 #### Signature
 
@@ -369,6 +420,21 @@ console.log(value);
 // "new"
 ```
 
+### Inspecting the current value
+
+```ts
+import { peek, set } from 'piscachio';
+
+set('warm value', { key: 'homepage-copy', staleIn: 10_000 });
+
+const snapshot = peek<string>('homepage-copy');
+
+if (!snapshot.missed) {
+  console.log(snapshot.state, snapshot.value);
+  // "fresh" "warm value"
+}
+```
+
 ### Private cache contexts
 
 ```ts
@@ -500,9 +566,17 @@ const count = await privatePiscachio(async () => 5, { key: 'count' });
 - it can also replace the entry used for subsequent lookups even if an earlier function call is still in flight
 - it does not cancel the original underlying work; it only changes what future cache lookups see
 
+### `peek(...)` semantics
+
+- `peek(...)` is read-only and never starts work
+- it does not invoke lifecycle callbacks
+- it does not extend `expireIn`
+- it returns the currently committed value if one exists, even when that value is stale
+- if a key only has pending work and no committed value yet, `peek(...)` reports a miss with `pending: true`
+
 ### Scope
 
-- the default export and named `set(...)`, `forceStale(...)`, and `expire(...)` use one shared in-memory, process-local cache
+- the default export and named `set(...)`, `peek(...)`, `forceStale(...)`, and `expire(...)` use one shared in-memory, process-local cache
 - `isolate()` creates additional private cache contexts inside the same process
 - values are not persisted across restarts
 - values are not shared across separate Node.js processes, workers, lambdas, or servers
