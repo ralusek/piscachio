@@ -1,4 +1,4 @@
-import piscachio, { isolate, peek } from '../dist';
+import piscachio, { isolate, peek, wipe } from '../dist';
 
 describe('basic piscachio functionality', () => {
   it('should not throw a typescript error for return type', async () => {
@@ -40,5 +40,12 @@ describe('basic piscachio functionality', () => {
     if (!result.missed) {
       const z: number = result.value;
     }
+  });
+
+  it('should not throw a typescript error for wipe helpers', () => {
+    const isolated = isolate();
+    isolated.wipe();
+    wipe();
+    piscachio.wipe();
   });
 });

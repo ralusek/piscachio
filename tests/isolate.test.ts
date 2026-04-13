@@ -1,4 +1,4 @@
-import piscachio, { isolate, set } from '../dist';
+import piscachio, { isolate, set, wipe } from '../dist';
 
 describe('isolate functionality', () => {
   it('should keep the default context separate from isolated contexts', async () => {
@@ -60,5 +60,124 @@ describe('isolate functionality', () => {
 
     expect(isolatedHitFn).toHaveBeenCalledTimes(0);
     expect(defaultHitFn).toHaveBeenCalledTimes(0);
+  });
+
+  it('should wipe only the targeted isolated context and leave it reusable', async () => {
+    const isolated = isolate();
+
+    isolated.set('isolated-value', { key: 'isolate-wipe-private' });
+    set('default-value', { key: 'isolate-wipe-private' });
+
+    isolated.wipe();
+
+    expect(isolated.peek('isolate-wipe-private')).toEqual({
+      key: 'isolate-wipe-private',
+      missed: true,
+      value: null,
+      state: 'missing',
+      pending: false,
+      committedAt: null,
+      staleAt: null,
+      expiresAt: null,
+    });
+
+    expect(piscachio.peek('isolate-wipe-private')).toEqual({
+      key: 'isolate-wipe-private',
+      missed: false,
+      value: 'default-value',
+      state: 'fresh',
+      pending: false,
+      committedAt: expect.any(Number),
+      staleAt: null,
+      expiresAt: null,
+    });
+
+    const refillFn = jest.fn().mockResolvedValue('refilled');
+    await expect(isolated(refillFn, { key: 'isolate-wipe-private' })).resolves.toBe('refilled');
+    expect(refillFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should let the shared wipe helper clear only the shared context', () => {
+    const isolated = isolate();
+
+    set('default-value', { key: 'shared-wipe-scope' });
+    isolated.set('isolated-value', { key: 'shared-wipe-scope' });
+
+    wipe();
+
+    expect(piscachio.peek('shared-wipe-scope')).toEqual({
+      key: 'shared-wipe-scope',
+      missed: true,
+      value: null,
+      state: 'missing',
+      pending: false,
+      committedAt: null,
+      staleAt: null,
+      expiresAt: null,
+    });
+
+    expect(isolated.peek('shared-wipe-scope')).toEqual({
+      key: 'shared-wipe-scope',
+      missed: false,
+      value: 'isolated-value',
+      state: 'fresh',
+      pending: false,
+      committedAt: expect.any(Number),
+      staleAt: null,
+      expiresAt: null,
+    });
+  });
+
+  it('should let pending work resolve after wipe without restoring wiped state', async () => {
+    const isolated = isolate();
+    let resolveValue!: (value: string) => void;
+    const fn = jest.fn().mockImplementation(
+      () => new Promise<string>((resolve) => {
+        resolveValue = resolve;
+      })
+    );
+
+    const pendingPromise = isolated(fn, { key: 'isolate-wipe-pending', expireIn: 60_000 });
+    expect(isolated.peek('isolate-wipe-pending')).toEqual({
+      key: 'isolate-wipe-pending',
+      missed: true,
+      value: null,
+      state: 'missing',
+      pending: true,
+      committedAt: null,
+      staleAt: null,
+      expiresAt: null,
+    });
+
+    isolated.wipe();
+
+    expect(isolated.peek('isolate-wipe-pending')).toEqual({
+      key: 'isolate-wipe-pending',
+      missed: true,
+      value: null,
+      state: 'missing',
+      pending: false,
+      committedAt: null,
+      staleAt: null,
+      expiresAt: null,
+    });
+
+    resolveValue('slow-result');
+    await expect(pendingPromise).resolves.toBe('slow-result');
+
+    expect(isolated.peek('isolate-wipe-pending')).toEqual({
+      key: 'isolate-wipe-pending',
+      missed: true,
+      value: null,
+      state: 'missing',
+      pending: false,
+      committedAt: null,
+      staleAt: null,
+      expiresAt: null,
+    });
+
+    const refillFn = jest.fn().mockResolvedValue('next-value');
+    await expect(isolated(refillFn, { key: 'isolate-wipe-pending' })).resolves.toBe('next-value');
+    expect(refillFn).toHaveBeenCalledTimes(1);
   });
 });

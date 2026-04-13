@@ -457,12 +457,21 @@ export default function createCache() {
     clear(key);
   }
 
+  function wipe() {
+    // Clearing timers first ensures the cache stops holding process-level resources
+    // immediately, even if callers drop all references right after `wipe()`.
+    for (const timeout of timeouts.values()) clearTimeout(timeout);
+    timeouts.clear();
+    cachedCalls.clear();
+  }
+
   const cache: PiscachioCache = {
     handle: handle as PiscachioCache['handle'],
     set,
     peek,
     forceStale,
     expire,
+    wipe,
   };
 
   return cache;

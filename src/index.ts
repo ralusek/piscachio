@@ -10,6 +10,7 @@ export const set = globalPiscachio.set;
 export const peek = globalPiscachio.peek;
 export const forceStale = globalPiscachio.forceStale;
 export const expire = globalPiscachio.expire;
+export const wipe = globalPiscachio.wipe;
 
 export function isolate(): PiscachioInstance {
   const cache = createCache();
@@ -56,11 +57,16 @@ export function isolate(): PiscachioInstance {
     cache.expire(getKeyAsString(key));
   }
 
+  function wipe(): void {
+    cache.wipe();
+  }
+
   const instance = piscachio as PiscachioInstance;
   instance.set = set;
   instance.peek = peek;
   instance.forceStale = forceStale;
   instance.expire = expire;
+  instance.wipe = wipe;
 
   return instance;
 }

@@ -127,6 +127,8 @@ export type PiscachioCache = {
   forceStale: (key: string) => void;
   /** Removes all cached state for the key immediately. */
   expire: (key: string) => void;
+  /** Clears every entry and timer so the cache can be safely dereferenced or reused empty. */
+  wipe: () => void;
 };
 
 export type KeyString = string;
@@ -148,4 +150,6 @@ export type PiscachioInstance = {
   forceStale: (key: string | string[]) => void;
   /** Removes the entry so the next read behaves like a miss. */
   expire: (key: string | string[]) => void;
+  /** Clears the entire cache instance without making it unusable for future calls. */
+  wipe: () => void;
 };

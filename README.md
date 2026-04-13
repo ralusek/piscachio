@@ -276,6 +276,32 @@ Notes:
 - expiring an entry does not cancel underlying work that is already running; it only disconnects future lookups from that entry
 - the named helper operates on the shared top-level cache; isolated instances expose `instance.expire(...)`
 
+### `wipe()`
+
+```ts
+import { isolate, wipe } from 'piscachio';
+
+const privateCache = isolate();
+privateCache.wipe();
+wipe();
+```
+
+Clears every entry and expiry timer in one cache context immediately. This is the teardown/reset helper for an entire cache instance: after `wipe()`, future reads behave like cold misses, while any work that was already in flight is allowed to finish without re-attaching itself to the wiped cache.
+
+#### Signature
+
+```ts
+function wipe(): void;
+```
+
+Notes:
+
+- `wipe()` is synchronous and clears the cache context immediately
+- it does not cancel in-flight user promises
+- pending work that resolves after `wipe()` does not repopulate the wiped cache
+- the cache instance remains fully usable after `wipe()`; subsequent calls build fresh state from scratch
+- the named helper operates on the shared top-level cache; isolated instances expose `instance.wipe(...)`
+
 ### `isolate()`
 
 ```ts
@@ -284,7 +310,7 @@ import { isolate } from 'piscachio';
 const privateCache = isolate();
 ```
 
-Creates a new private in-memory cache context. The default export and named helpers keep using the shared top-level context, while each isolated instance gets its own cache and its own `instance.set(...)`, `instance.peek(...)`, `instance.forceStale(...)`, and `instance.expire(...)`.
+Creates a new private in-memory cache context. The default export and named helpers keep using the shared top-level context, while each isolated instance gets its own cache and its own `instance.set(...)`, `instance.peek(...)`, `instance.forceStale(...)`, `instance.expire(...)`, and `instance.wipe(...)`.
 
 #### Signature
 
@@ -557,6 +583,8 @@ const count = await privatePiscachio(async () => 5, { key: 'count' });
 - `forceStale(...)` keeps the current value but makes the next stale-capable read behave like a stale hit
 - if an entry has no `staleIn` configured yet, `forceStale(...)` does not discard the value; the next read stays fresh until a `staleIn` is provided
 - `expire(...)` removes the entry immediately so the next read is a miss
+- `wipe()` clears an entire cache context immediately and is the safe way to drop an isolate without retaining cached values or expiry timers
+- `wipe()` resets the cache context but does not make it unusable; later calls recreate entries normally
 - neither helper cancels user code that is already running in the background
 
 ### `set(...)` semantics
@@ -576,7 +604,7 @@ const count = await privatePiscachio(async () => 5, { key: 'count' });
 
 ### Scope
 
-- the default export and named `set(...)`, `peek(...)`, `forceStale(...)`, and `expire(...)` use one shared in-memory, process-local cache
+- the default export and named `set(...)`, `peek(...)`, `forceStale(...)`, `expire(...)`, and `wipe()` use one shared in-memory, process-local cache
 - `isolate()` creates additional private cache contexts inside the same process
 - values are not persisted across restarts
 - values are not shared across separate Node.js processes, workers, lambdas, or servers
